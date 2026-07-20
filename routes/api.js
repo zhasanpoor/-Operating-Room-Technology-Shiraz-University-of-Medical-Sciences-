@@ -359,6 +359,83 @@ router.delete('/files/:id', authMiddleware, adminOnly, (req, res) => {
     }
 });
 
+/**
+ * خطای اتصال دیتابیس را به پیام فارسی امن تبدیل می‌کند.
+ * عمداً متن خام خطا برگردانده نمی‌شود چون معمولاً شامل نام میزبان و
+ * نام کاربری است و نباید عمومی شود.
+ */
+function describeDbError(err) {
+    const code = err && err.code;
+    switch (code) {
+        case 'ENOTFOUND':
+        case 'EAI_AGAIN':
+            return 'آدرس دیتابیس پیدا نشد — احتمالاً DATABASE_URL اشتباه کپی شده.';
+        case 'ECONNREFUSED':
+            return 'دیتابیس اتصال را رد کرد — شاید هنوز آماده نشده یا منطقه‌اش فرق دارد.';
+        case 'ETIMEDOUT':
+            return 'اتصال به دیتابیس زمان‌بر شد — احتمالاً منطقهٔ دیتابیس با سرویس وب یکی نیست.';
+        case '28P01':
+            return 'نام کاربری یا رمز دیتابیس اشتباه است.';
+        case '3D000':
+            return 'دیتابیسی با این نام وجود ندارد.';
+        default:
+            return 'اتصال به دیتابیس برقرار نشد' + (code ? ` (کد: ${code})` : '') + '.';
+    }
+}
+
+/**
+ * بررسی سلامت سرویس — برای اطمینان از اینکه Postgres درست وصل شده.
+ * هیچ اطلاعات محرمانه‌ای (آدرس، کاربر، رمز) برگردانده نمی‌شود.
+ */
+router.get('/health', async (req, res) => {
+    const report = {
+        status: 'ok',
+        time: new Date().toISOString(),
+        database: {}
+    };
+
+    const url = process.env.DATABASE_URL;
+    report.database.configured = !!url;
+
+    if (!url) {
+        report.status = 'degraded';
+        report.database.engine = 'sqlite';
+        report.database.persistent = false;
+        report.database.warning =
+            'DATABASE_URL تنظیم نشده — داده‌ها با هر دیپلوی پاک می‌شوند.';
+        return res.json(report);
+    }
+
+    report.database.engine = 'postgres';
+
+    let pool;
+    try {
+        const { Pool } = require('pg');
+        pool = new Pool({
+            connectionString: url,
+            ssl: url.includes('localhost') ? false : { rejectUnauthorized: false },
+            connectionTimeoutMillis: 8000,
+            max: 1
+        });
+        const result = await pool.query('SELECT version() AS version');
+        report.database.connected = true;
+        report.database.persistent = true;
+        report.database.version =
+            String(result.rows[0].version).split(' ').slice(0, 2).join(' ');
+    } catch (err) {
+        report.status = 'degraded';
+        report.database.connected = false;
+        report.database.error = describeDbError(err);
+    } finally {
+        if (pool) pool.end().catch(() => {});
+    }
+
+    // همیشه ۲۰۰ برمی‌گردد و وضعیت واقعی در بدنهٔ پاسخ است.
+    // اگر روزی Render این مسیر را به‌عنوان health check استفاده کند،
+    // پاسخ ۵۰۳ باعث شکست دیپلوی یا ری‌استارت پیاپی سرویس می‌شود.
+    res.json(report);
+});
+
 // Stats
 router.get('/stats', (req, res) => {
     try {
