@@ -103,6 +103,10 @@ function renderAdminDashboard(data){
     </div>`).join('');
   requestAnimationFrame(()=>document.querySelectorAll('#dashChart .bar-fill').forEach(b=>b.style.width=b.dataset.w+'%'));
 
+  renderQueues(data);
+  renderLatest(data.latestPosts||[]);
+  renderEngagement(data.engagement||{});
+
   // فعالیت‌های اخیر
   const act=data.recent||[];
   document.getElementById('dashActivity').innerHTML=act.length?act.map(a=>`
@@ -114,6 +118,108 @@ function renderAdminDashboard(data){
       </div>
       <div class="activity-time">${Jalali.relative(a.created_at)}</div>
     </div>`).join(''):'<p class="muted">هنوز فعالیتی ثبت نشده.</p>';
+}
+
+// صف تأیید مطالب و درخواست‌های نویسندگی روی داشبورد
+function renderQueues(data){
+  const rq=document.getElementById('dashReviewQueue');
+  const queue=data.reviewQueue||[];
+  rq.innerHTML=queue.length?queue.map(q=>`
+    <div class="q-row">
+      <span class="q-ico">${q.category_icon||'🏥'}</span>
+      <span class="q-body">
+        <span class="q-name">${esc(q.name)}</span>
+        <span class="q-meta">${esc(q.author_name||'نامشخص')} · ${Jalali.relative(q.submitted_at)}</span>
+      </span>
+      <button class="q-go" data-goto-review="${q.id}">بررسی</button>
+    </div>`).join(''):'<p class="muted">صف خالیه 🎉</p>';
+  rq.querySelectorAll('[data-goto-review]').forEach(b=>
+    b.addEventListener('click',()=>{showPage('review');loadReviewQueue()}));
+
+  const aq=document.getElementById('dashAuthorQueue');
+  const reqs=data.authorQueue||[];
+  aq.innerHTML=reqs.length?reqs.map(r=>`
+    <div class="q-row">
+      <span class="q-ico">✍️</span>
+      <span class="q-body">
+        <span class="q-name">${esc(r.full_name)}</span>
+        <span class="q-meta">${esc(r.author_request_note||'بدون توضیح')} · ${Jalali.relative(r.author_requested_at)}</span>
+      </span>
+      <span class="q-actions">
+        <button class="q-ok" data-req-ok="${r.id}">تأیید</button>
+        <button class="q-no" data-req-no="${r.id}">رد</button>
+      </span>
+    </div>`).join(''):'<p class="muted">درخواستی در انتظار نیست.</p>';
+
+  aq.querySelectorAll('[data-req-ok]').forEach(b=>
+    b.addEventListener('click',()=>decideAuthorRequest(b.dataset.reqOk,'approve')));
+  aq.querySelectorAll('[data-req-no]').forEach(b=>
+    b.addEventListener('click',()=>decideAuthorRequest(b.dataset.reqNo,'reject')));
+}
+
+async function decideAuthorRequest(id,decision){
+  let note='';
+  if(decision==='reject'){
+    note=prompt('دلیل رد درخواست؟ (اختیاری، برای کاربر ارسال می‌شود)')||'';
+  }else if(!confirm('این کاربر نویسنده شود؟')){return}
+  try{
+    const res=await api(`/author-requests/${id}`,{method:'POST',body:JSON.stringify({decision,note})});
+    toast(res.message||'انجام شد');
+    loadDashboard();
+  }catch(e){toast(e.message||'خطا','error')}
+}
+
+// آخرین مطالب افزوده‌شده
+function renderLatest(posts){
+  const el=document.getElementById('dashLatest');
+  const STATUS_STYLE={approved:'ok',pending:'warn',draft:'muted',rejected:'bad',changes_requested:'warn'};
+  el.innerHTML=posts.length?posts.map(p=>`
+    <div class="q-row">
+      <span class="q-ico">${p.category_icon||'🏥'}</span>
+      <span class="q-body">
+        <span class="q-name">${esc(p.name)}</span>
+        <span class="q-meta">${esc(p.author_name||'مدیر')} · ${esc(p.category_name)} · ${Jalali.relative(p.created_at)}</span>
+      </span>
+      <span class="q-status q-${STATUS_STYLE[p.status]||'muted'}">${STATUS_FA[p.status]||p.status}</span>
+    </div>`).join(''):'<p class="muted">هنوز مطلبی اضافه نشده.</p>';
+}
+
+// گزارش اشتراک‌گذاری و علاقه‌مندی
+function renderEngagement(e){
+  const CHANNEL_FA={telegram:'تلگرام',whatsapp:'واتساپ',eitaa:'ایتا',bale:'بله',
+    rubika:'روبیکا',twitter:'ایکس',linkedin:'لینکدین',email:'ایمیل',
+    copy:'کپی لینک',native:'اشتراک گوشی'};
+  const CHANNEL_COLOR={telegram:'#29b6f6',whatsapp:'#25d366',eitaa:'#ff7a00',
+    bale:'#1e88e5',rubika:'#8e24aa',twitter:'#9ca3af',linkedin:'#0a66c2',
+    email:'#f59e0b',copy:'#6366f1',native:'#10b981'};
+
+  const el=document.getElementById('dashShares');
+  const rows=e.sharesByChannel||[];
+  const total=e.totalShares||0;
+  if(!rows.length){
+    el.innerHTML='<p class="muted">هنوز مطلبی اشتراک‌گذاری نشده.</p>';
+  }else{
+    const max=Math.max(...rows.map(r=>r.count));
+    el.innerHTML=`<div class="eng-total">مجموع: <strong>${fa(total)}</strong> اشتراک‌گذاری</div>`+
+      rows.map(r=>`
+      <div class="bar-row">
+        <div class="bar-label">${CHANNEL_FA[r.channel]||esc(r.channel)}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:0;background:${CHANNEL_COLOR[r.channel]||'#6366f1'}" data-w="${(r.count/max*100).toFixed(1)}"></div></div>
+        <div class="bar-value">${fa(r.count)}</div>
+      </div>`).join('');
+    requestAnimationFrame(()=>el.querySelectorAll('.bar-fill').forEach(b=>b.style.width=b.dataset.w+'%'));
+  }
+
+  const fv=document.getElementById('dashTopFav');
+  const top=e.topFavorites||[];
+  fv.innerHTML=`<div class="eng-total">❤️ ${fa(e.favorites||0)} علاقه‌مندی · 🔖 ${fa(e.bookmarks||0)} نشان</div>`+
+    (top.length?top.map((t,i)=>`
+      <div class="q-row">
+        <span class="q-rank">${fa(i+1)}</span>
+        <span class="q-body"><span class="q-name">${esc(t.name)}</span></span>
+        <span class="q-count">❤️ ${fa(t.count)}</span>
+      </div>`).join('')
+     :'<p class="muted">هنوز کسی مطلبی را نپسندیده.</p>');
 }
 
 function renderAuthorDashboard(data){

@@ -1489,7 +1489,70 @@ router.get('/dashboard-stats', authMiddleware, (req, res) => {
                 FROM audit_log a LEFT JOIN users u ON a.user_id = u.id
                 ORDER BY a.created_at DESC LIMIT 10
             `).all();
-            return res.json({ role: 'admin', stats, byStatus, perCategory, recent });
+
+            // آخرین مطالب افزوده‌شده
+            const latestPosts = db.prepare(`
+                SELECT o.id, o.name, o.status, o.created_at, o.slug,
+                       c.name_fa AS category_name, c.icon AS category_icon,
+                       u.full_name AS author_name
+                FROM operations o
+                JOIN categories c ON o.category_id = c.id
+                LEFT JOIN users u ON o.author_id = u.id
+                ORDER BY o.created_at DESC, o.id DESC LIMIT 8
+            `).all();
+
+            // صف درخواست نویسندگی
+            const authorQueue = db.prepare(`
+                SELECT id, full_name, username, author_request_note, author_requested_at
+                FROM users WHERE author_request_status = 'pending'
+                ORDER BY author_requested_at ASC LIMIT 8
+            `).all();
+
+            // صف تأیید مطالب
+            const reviewQueue = db.prepare(`
+                SELECT o.id, o.name, o.submitted_at,
+                       c.icon AS category_icon, u.full_name AS author_name
+                FROM operations o
+                JOIN categories c ON o.category_id = c.id
+                LEFT JOIN users u ON o.author_id = u.id
+                WHERE o.status = 'pending'
+                ORDER BY o.submitted_at ASC LIMIT 8
+            `).all();
+
+            // آمار تعامل: اشتراک‌گذاری به تفکیک کانال + محبوب‌ترین‌ها
+            const sharesByChannel = db.prepare(`
+                SELECT channel, COUNT(*) AS count FROM shares
+                GROUP BY channel ORDER BY count DESC
+            `).all();
+            const totalShares = sharesByChannel.reduce((sum, r) => sum + r.count, 0);
+
+            const topFavorites = db.prepare(`
+                SELECT o.id, o.name, COUNT(ui.id) AS count
+                FROM user_items ui
+                JOIN operations o ON ui.operation_id = o.id
+                WHERE ui.kind = 'favorite'
+                GROUP BY o.id ORDER BY count DESC LIMIT 5
+            `).all();
+
+            const topShared = db.prepare(`
+                SELECT o.id, o.name, COUNT(s.id) AS count
+                FROM shares s
+                JOIN operations o ON s.operation_id = o.id
+                GROUP BY o.id ORDER BY count DESC LIMIT 5
+            `).all();
+
+            const engagement = db.prepare(`
+                SELECT
+                    (SELECT COUNT(*) FROM user_items WHERE kind = 'favorite') AS favorites,
+                    (SELECT COUNT(*) FROM user_items WHERE kind = 'bookmark') AS bookmarks
+            `).get();
+
+            return res.json({
+                role: 'admin', stats, byStatus, perCategory, recent,
+                latestPosts, authorQueue, reviewQueue,
+                engagement: { ...engagement, totalShares, sharesByChannel,
+                              topFavorites, topShared }
+            });
         }
 
         // کاربر عادی: آمار فعالیت خودش
