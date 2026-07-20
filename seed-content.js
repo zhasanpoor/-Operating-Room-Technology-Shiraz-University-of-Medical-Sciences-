@@ -1,5 +1,6 @@
 require('dotenv').config();
-const db = require('./database');
+
+module.exports = function(db) {
 
 const contentData = [
   {
@@ -825,3 +826,4 @@ function seedContent() {
 }
 
 seedContent();
+};

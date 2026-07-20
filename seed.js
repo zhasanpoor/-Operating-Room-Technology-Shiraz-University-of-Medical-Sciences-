@@ -1,6 +1,7 @@
 require('dotenv').config();
-const db = require('./database');
 const bcrypt = require('bcryptjs');
+
+module.exports = function(db) {
 
 const categoriesData = [
     { key: 'general', name_fa: 'جنرال', name_en: 'General Surgery', icon: '🏥', color: '#2563eb', sort_order: 1 },
@@ -229,3 +230,4 @@ function seed() {
 }
 
 seed();
+};

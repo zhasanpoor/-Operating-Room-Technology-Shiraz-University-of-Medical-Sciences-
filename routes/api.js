@@ -1,6 +1,4 @@
 const express = require('express');
-const router = express.Router();
-const db = require('../database');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -8,6 +6,9 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'shiraz-ort-secret-key-2024';
+
+module.exports = function(db) {
+const router = express.Router();
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -374,4 +375,5 @@ router.get('/stats', (req, res) => {
     }
 });
 
-module.exports = router;
+return router;
+};
