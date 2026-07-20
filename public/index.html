@@ -40,20 +40,34 @@
                             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
                             <circle cx="12" cy="7" r="4"></circle>
                         </svg>
-                        ورود
+                        ورود / ثبت‌نام
                     </button>
                     <div class="user-info hidden" id="userInfo">
-                        <div class="user-details">
-                            <span class="user-name" id="userName"></span>
-                            <span class="user-role" id="userRole"></span>
-                        </div>
-                        <button class="logout-btn" id="logoutBtn">
+                        <button class="notif-bell" id="notifBell" title="اعلان‌ها" aria-label="اعلان‌ها">
+                            🔔<span class="notif-count hidden" id="notifCount">0</span>
+                        </button>
+                        <button class="user-chip" id="userChip">
+                            <span class="user-chip-avatar" id="userChipAvatar">؟</span>
+                            <span class="user-details">
+                                <span class="user-name" id="userName"></span>
+                                <span class="user-role" id="userRole"></span>
+                            </span>
+                        </button>
+                        <a href="/admin" class="panel-link hidden" id="panelLink" title="پنل مدیریت">پنل</a>
+                        <button class="logout-btn" id="logoutBtn" title="خروج" aria-label="خروج">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
                                 <polyline points="16 17 21 12 16 7"></polyline>
                                 <line x1="21" y1="12" x2="9" y2="12"></line>
                             </svg>
                         </button>
+                    </div>
+                    <div class="notif-panel hidden" id="notifPanel">
+                        <div class="notif-panel-head">
+                            <span>اعلان‌ها</span>
+                            <button id="notifReadAll" class="notif-readall">خواندن همه</button>
+                        </div>
+                        <div class="notif-list" id="notifList"></div>
                     </div>
                 </div>
             </div>
@@ -158,7 +172,7 @@
 
     <div class="login-modal-overlay hidden" id="loginModalOverlay">
         <div class="login-modal" id="loginModal">
-            <button class="login-modal-close" id="loginModalClose">
+            <button class="login-modal-close" id="loginModalClose" aria-label="بستن">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <line x1="18" y1="6" x2="6" y2="18"></line>
                     <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -166,28 +180,121 @@
             </button>
             <div class="login-modal-header">
                 <div class="login-icon">🏥</div>
-                <h2>ورود به سیستم</h2>
-                <p>تکنولوژی اتاق عمل — ویژه دانشجویان و متخصصین علوم پزشکی</p>
+                <h2 id="authModalTitle">ورود به حساب</h2>
+                <p id="authModalSub">خوش برگشتی! وارد شو و ادامه بده</p>
             </div>
-            <form class="login-form" id="loginForm">
+
+            <div class="auth-tabs">
+                <button type="button" class="auth-tab active" data-mode="login">ورود</button>
+                <button type="button" class="auth-tab" data-mode="signup">ثبت‌نام</button>
+            </div>
+
+            <form class="login-form" id="authForm">
                 <div class="login-error hidden" id="loginError"></div>
+
+                <div class="form-group signup-only hidden">
+                    <label for="authFullName">نام و نام خانوادگی</label>
+                    <input type="text" id="authFullName" placeholder="مثلاً سارا احمدی" autocomplete="name">
+                </div>
+
                 <div class="form-group">
                     <label for="loginUsername">نام کاربری</label>
-                    <input type="text" id="loginUsername" placeholder="نام کاربری خود را وارد کنید" required autocomplete="username">
+                    <input type="text" id="loginUsername" placeholder="فقط حروف انگلیسی، عدد، نقطه و زیرخط" required autocomplete="username">
                 </div>
+
+                <div class="form-group signup-only hidden">
+                    <label for="authEmail">ایمیل <span class="optional">(اختیاری)</span></label>
+                    <input type="email" id="authEmail" placeholder="you@example.com" autocomplete="email">
+                </div>
+
                 <div class="form-group">
                     <label for="loginPassword">رمز عبور</label>
-                    <input type="password" id="loginPassword" placeholder="رمز عبور خود را وارد کنید" required autocomplete="current-password">
+                    <input type="password" id="loginPassword" placeholder="رمز عبور" required autocomplete="current-password">
+                    <div class="pwd-hint signup-only hidden" id="pwdHint">حداقل ۸ کاراکتر، شامل حرف و عدد</div>
                 </div>
-                <button type="submit" class="login-submit-btn">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
-                        <polyline points="10 17 15 12 10 7"></polyline>
-                        <line x1="15" y1="12" x2="3" y2="12"></line>
-                    </svg>
-                    ورود
+
+                <div class="form-group captcha-row hidden" id="captchaRow">
+                    <label id="captchaQuestion">سؤال امنیتی</label>
+                    <input type="text" id="captchaAnswer" placeholder="پاسخ را وارد کنید" inputmode="numeric" autocomplete="off">
+                </div>
+
+                <button type="submit" class="login-submit-btn" id="authSubmitBtn">
+                    <span id="authSubmitText">ورود</span>
                 </button>
+
+                <p class="auth-switch-hint" id="authSwitchHint">
+                    حساب نداری؟ <a href="#" id="authSwitchLink">همین حالا ثبت‌نام کن</a>
+                </p>
             </form>
+        </div>
+    </div>
+
+    <!-- پروفایل کاربر -->
+    <div class="login-modal-overlay hidden" id="profileModalOverlay">
+        <div class="login-modal profile-modal" id="profileModal">
+            <button class="login-modal-close" id="profileModalClose" aria-label="بستن">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            </button>
+            <div class="profile-head">
+                <div class="profile-avatar-wrap">
+                    <div class="profile-avatar" id="profileAvatar">?</div>
+                    <button class="avatar-edit-btn" id="avatarEditBtn" title="تغییر عکس">📷</button>
+                    <input type="file" id="avatarInput" accept="image/png,image/jpeg,image/webp" hidden>
+                </div>
+                <div>
+                    <h2 id="profileName">—</h2>
+                    <span class="profile-role-badge" id="profileRoleBadge">کاربر</span>
+                </div>
+            </div>
+
+            <div class="profile-tabs">
+                <button type="button" class="profile-tab active" data-ptab="info">اطلاعات</button>
+                <button type="button" class="profile-tab" data-ptab="password">تغییر رمز</button>
+                <button type="button" class="profile-tab" data-ptab="author" id="authorTabBtn">نویسنده شدن</button>
+            </div>
+
+            <div class="profile-panel active" id="ppanel-info">
+                <form id="profileInfoForm">
+                    <div class="login-error hidden" id="profileError"></div>
+                    <div class="login-success hidden" id="profileSuccess"></div>
+                    <div class="form-group">
+                        <label for="pfName">نام و نام خانوادگی</label>
+                        <input type="text" id="pfName" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="pfEmail">ایمیل</label>
+                        <input type="email" id="pfEmail" placeholder="اختیاری">
+                    </div>
+                    <div class="form-group">
+                        <label for="pfBio">دربارهٔ من</label>
+                        <textarea id="pfBio" rows="3" maxlength="500" placeholder="یک معرفی کوتاه از خودت"></textarea>
+                    </div>
+                    <button type="submit" class="login-submit-btn">ذخیرهٔ تغییرات</button>
+                </form>
+            </div>
+
+            <div class="profile-panel" id="ppanel-password">
+                <form id="passwordForm">
+                    <div class="login-error hidden" id="pwError"></div>
+                    <div class="login-success hidden" id="pwSuccess"></div>
+                    <div class="form-group">
+                        <label for="pfCurrentPw">رمز فعلی</label>
+                        <input type="password" id="pfCurrentPw" required autocomplete="current-password">
+                    </div>
+                    <div class="form-group">
+                        <label for="pfNewPw">رمز جدید</label>
+                        <input type="password" id="pfNewPw" required autocomplete="new-password">
+                        <div class="pwd-hint">حداقل ۸ کاراکتر، شامل حرف و عدد</div>
+                    </div>
+                    <button type="submit" class="login-submit-btn">تغییر رمز</button>
+                </form>
+            </div>
+
+            <div class="profile-panel" id="ppanel-author">
+                <div id="authorRequestArea"></div>
+            </div>
         </div>
     </div>
 
@@ -208,6 +315,7 @@
         </div>
     </footer>
 
+    <script src="/js/jalali.js"></script>
     <script src="/js/app.js"></script>
 </body>
 </html>
