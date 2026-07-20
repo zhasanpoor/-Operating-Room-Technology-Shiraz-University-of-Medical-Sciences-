@@ -1,7 +1,7 @@
 {
   "name": "operating-room-technology",
   "version": "1.0.0",
-  "description": "تکنولوژی اتاق عمل - دانشگاه علوم پزشکی شیراز",
+  "description": "تکنولوژی اتاق عمل - ویژه دانشجویان و متخصصین علوم پزشکی",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
