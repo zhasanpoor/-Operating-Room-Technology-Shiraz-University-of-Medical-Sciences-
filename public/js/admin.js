@@ -40,6 +40,32 @@ async function loadDashboard(){
   if(data.role==='admin')renderAdminDashboard(data);
   else renderAuthorDashboard(data);
   refreshReviewBadge();
+  loadLeaderboard();
+}
+
+// جدول رتبه‌بندی نویسندگان — انگیزهٔ رقابت
+async function loadLeaderboard(){
+  const el=document.getElementById('dashLeaderboard');
+  if(!el)return;
+  try{
+    const data=await api('/leaderboard');
+    if(!data.board.length){
+      el.innerHTML='<p class="muted">هنوز نویسنده‌ای پست تأییدشده نداره. اولین نفر باش!</p>';
+      return;
+    }
+    const medals=['🥇','🥈','🥉'];
+    el.innerHTML=data.board.map(b=>`
+      <div class="lb-row ${b.isMe?'lb-me':''}">
+        <span class="lb-rank">${medals[b.rank-1]||fa(b.rank)}</span>
+        <span class="lb-avatar" ${b.avatar?`style="background-image:url(${b.avatar})"`:''}>${b.avatar?'':esc(b.full_name.charAt(0))}</span>
+        <span class="lb-name">${esc(b.full_name)}${b.isMe?' <span class="lb-you">(شما)</span>':''}</span>
+        <span class="lb-level" title="${b.level.name}">${b.level.icon}</span>
+        <span class="lb-count">${fa(b.approved_count)} پست</span>
+      </div>`).join('');
+    if(data.myRank){
+      el.innerHTML+=`<div class="lb-myrank">رتبهٔ شما: ${fa(data.myRank.rank)} — ${fa(data.myRank.approved_count)} پست تأییدشده</div>`;
+    }
+  }catch(e){el.innerHTML='<p class="muted">بارگذاری جدول ناموفق بود.</p>'}
 }
 
 function renderAdminDashboard(data){

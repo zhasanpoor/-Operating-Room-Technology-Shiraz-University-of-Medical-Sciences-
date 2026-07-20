@@ -1067,6 +1067,7 @@ router.post('/operations/:id/review', authMiddleware, requireAdmin, (req, res) =
 
         const newStatus = valid[decision];
         const isApprove = decision === 'approve';
+        const wasApproved = operation.status === 'approved';
 
         db.prepare(`UPDATE operations SET
                         status = ?,
@@ -1077,6 +1078,19 @@ router.post('/operations/:id/review', authMiddleware, requireAdmin, (req, res) =
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?`)
           .run(newStatus, isApprove ? 1 : 0, req.user.id, isApprove ? 1 : 0, req.params.id);
+
+        // امتیاز تشویقی: ۱۰ امتیاز برای هر تأیید تازه. اگر پستی که قبلاً
+        // تأیید شده بود حالا رد/اصلاح شود، امتیازش پس گرفته می‌شود تا
+        // آمار جدول رتبه‌بندی درست بماند. امتیاز هرگز منفی نمی‌شود.
+        if (operation.author_id) {
+            if (isApprove && !wasApproved) {
+                db.prepare('UPDATE users SET points = points + 10 WHERE id = ?')
+                  .run(operation.author_id);
+            } else if (!isApprove && wasApproved) {
+                db.prepare('UPDATE users SET points = MAX(0, points - 10) WHERE id = ?')
+                  .run(operation.author_id);
+            }
+        }
 
         // کامنت بررسی (اختیاری) — گفتگوی ادمین و نویسنده روی پست
         if (comment && String(comment).trim()) {
@@ -1259,6 +1273,63 @@ router.post('/notifications/read-all', authMiddleware, (req, res) => {
         res.json({ message: 'همه خوانده شد.' });
     } catch (err) {
         res.status(500).json({ error: 'به‌روزرسانی اعلان‌ها ناموفق بود.' });
+    }
+});
+
+/**
+ * جدول رتبه‌بندی نویسندگان بر اساس تعداد پست تأییدشده.
+ * عمومی است (بدون احراز هویت) تا رقابت دیده شود، اما فقط نام و آمار
+ * غیرحساس برگردانده می‌شود — نه ایمیل و نه نام کاربری.
+ */
+router.get('/leaderboard', optionalAuth, (req, res) => {
+    try {
+        const rows = db.prepare(`
+            SELECT u.id, u.full_name, u.avatar, u.points,
+                   COUNT(o.id) AS approved_count
+            FROM users u
+            JOIN operations o ON o.author_id = u.id AND o.status = 'approved'
+            WHERE u.role = 'editor' AND u.is_active = 1
+            GROUP BY u.id
+            HAVING approved_count > 0
+            ORDER BY approved_count DESC, u.points DESC
+            LIMIT 20
+        `).all();
+
+        const levelOf = (n) => n >= 30 ? { name: 'الماسی', icon: '💎' }
+            : n >= 15 ? { name: 'طلایی', icon: '🥇' }
+            : n >= 5  ? { name: 'نقره‌ای', icon: '🥈' }
+            : n >= 1  ? { name: 'برنزی', icon: '🥉' }
+            : { name: 'تازه‌کار', icon: '🌱' };
+
+        const board = rows.map((r, i) => ({
+            rank: i + 1,
+            full_name: r.full_name,
+            avatar: r.avatar || '',
+            approved_count: r.approved_count,
+            level: levelOf(r.approved_count),
+            // آیا این ردیف، خود کاربر درخواست‌دهنده است؟
+            isMe: req.user ? r.id === req.user.id : false
+        }));
+
+        // اگر کاربر واردشده نویسنده است ولی جزو ۲۰ نفر اول نیست، رتبهٔ خودش را هم بده
+        let myRank = null;
+        if (req.user && req.user.role === 'editor' && !board.some(b => b.isMe)) {
+            const all = db.prepare(`
+                SELECT u.id, COUNT(o.id) AS c
+                FROM users u
+                JOIN operations o ON o.author_id = u.id AND o.status = 'approved'
+                WHERE u.role = 'editor' AND u.is_active = 1
+                GROUP BY u.id HAVING c > 0
+                ORDER BY c DESC
+            `).all();
+            const idx = all.findIndex(x => x.id === req.user.id);
+            if (idx >= 0) myRank = { rank: idx + 1, approved_count: all[idx].c };
+        }
+
+        res.json({ board, myRank });
+    } catch (err) {
+        console.error('خطا در رتبه‌بندی:', err.message);
+        res.status(500).json({ error: 'خواندن جدول رتبه‌بندی ناموفق بود.' });
     }
 });
 
