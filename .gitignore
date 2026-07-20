@@ -5,6 +5,7 @@ database.sqlite-wal
 uploads/*
 !uploads/.gitkeep
 .env
+.jwt-secret
 *.log
 .DS_Store
 Thumbs.db

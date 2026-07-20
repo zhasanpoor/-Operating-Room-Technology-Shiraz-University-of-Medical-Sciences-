@@ -159,6 +159,10 @@ async function initDatabase() {
         CREATE INDEX IF NOT EXISTS idx_operation_content_operation ON operation_content(operation_id);
     `);
 
+    // اسکیمای پایه بالا ساخته شد؛ حالا مهاجرت‌های افزایشی نسخه ۲ اجرا می‌شوند.
+    const { runMigrations } = require('./migrations');
+    runMigrations(_db);
+
     _db.save();
     return _db;
 }
