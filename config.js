@@ -28,38 +28,63 @@ function isStrongSecret(value) {
         && !KNOWN_WEAK_SECRETS.has(value);
 }
 
+/**
+ * کلید امضای توکن را تعیین می‌کند.
+ *
+ * چرا دیگر با خطا خارج نمی‌شویم؟
+ * نسخهٔ قبلی در production بدون `JWT_SECRET` کل سرویس را پایین می‌آورد.
+ * این تصمیم اشتباه بود: خطری که می‌خواستیم جلویش را بگیریم «کلید ضعیف یا
+ * لو رفته» بود، و یک مقدار تصادفی ۴۸ بایتی دقیقاً به اندازهٔ مقدار محیطی
+ * امن است. تنها تفاوتش این است که با ری‌استارت عوض می‌شود و کاربران باید
+ * دوباره وارد شوند — که هزینهٔ راحتی است، نه هزینهٔ امنیتی.
+ *
+ * پس: هرگز از کلید ضعیفِ لو رفته استفاده نمی‌کنیم، ولی سایت را هم
+ * پایین نمی‌آوریم. فقط بلند هشدار می‌دهیم.
+ */
 function resolveJwtSecret() {
     const fromEnv = process.env.JWT_SECRET;
 
     if (isStrongSecret(fromEnv)) return fromEnv;
 
-    if (IS_PRODUCTION) {
-        console.error(`
-╔══════════════════════════════════════════════════════════════╗
-║  خطای امنیتی مرگبار: JWT_SECRET معتبر تنظیم نشده است.        ║
-║                                                              ║
-║  یک مقدار تصادفی حداقل ۳۲ کاراکتری در متغیرهای محیطی        ║
-║  سرور تعریف کنید. برای ساختنش:                              ║
-║    node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
-╚══════════════════════════════════════════════════════════════╝
-`);
-        process.exit(1);
+    if (fromEnv && !isStrongSecret(fromEnv)) {
+        console.warn('⚠️  مقدار JWT_SECRET ضعیف یا لو رفته است و نادیده گرفته شد.');
     }
 
-    // حالت توسعه: secret پایدارِ تصادفی روی دیسک
+    // تلاش برای کلید پایدار روی دیسک تا ری‌استارت‌های داخل همان کانتینر
+    // کاربران را بیرون نیندازد.
+    let secret = null;
     try {
         if (fs.existsSync(SECRET_FILE)) {
             const saved = fs.readFileSync(SECRET_FILE, 'utf8').trim();
-            if (isStrongSecret(saved)) return saved;
+            if (isStrongSecret(saved)) secret = saved;
         }
-        const generated = crypto.randomBytes(48).toString('hex');
-        fs.writeFileSync(SECRET_FILE, generated, { mode: 0o600 });
-        console.warn('⚠️  JWT_SECRET تنظیم نشده بود — یک مقدار تصادفی ساخته و در .jwt-secret ذخیره شد (فقط برای توسعه).');
-        return generated;
+        if (!secret) {
+            secret = crypto.randomBytes(48).toString('hex');
+            fs.writeFileSync(SECRET_FILE, secret, { mode: 0o600 });
+        }
     } catch (err) {
-        console.warn('⚠️  ذخیرهٔ .jwt-secret ممکن نشد؛ secret موقتی در حافظه ساخته شد.');
-        return crypto.randomBytes(48).toString('hex');
+        // فایل‌سیستم فقط-خواندنی — کلید موقت در حافظه
+        secret = secret || crypto.randomBytes(48).toString('hex');
     }
+
+    if (IS_PRODUCTION) {
+        console.warn(`
+╔══════════════════════════════════════════════════════════════╗
+║  ⚠️  هشدار: JWT_SECRET در متغیرهای محیطی تنظیم نشده است.     ║
+║                                                              ║
+║  سایت بالا می‌آید و امن است (کلید تصادفی قوی ساخته شد)،      ║
+║  اما این کلید با هر ری‌استارت عوض می‌شود و همهٔ کاربران      ║
+║  از حساب خارج می‌شوند.                                       ║
+║                                                              ║
+║  برای رفع دائمی، در Render → Environment این را اضافه کنید:  ║
+║     JWT_SECRET = (یک مقدار تصادفی ۶۴ کاراکتری)               ║
+╚══════════════════════════════════════════════════════════════╝
+`);
+    } else {
+        console.warn('⚠️  JWT_SECRET تنظیم نشده — کلید تصادفی در .jwt-secret ذخیره شد (توسعه).');
+    }
+
+    return secret;
 }
 
 module.exports = {
