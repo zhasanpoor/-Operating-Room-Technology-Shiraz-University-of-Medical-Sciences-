@@ -1,5 +1,6 @@
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
 module.exports = function(db) {
 
@@ -205,10 +206,27 @@ function seed() {
         VALUES (?, ?, ?, ?)
     `);
 
-    const salt = bcrypt.genSaltSync(10);
+    // ── رمز حساب مدیر ────────────────────────────────────────────────
+    // هرگز رمز ثابت در کد نگذارید: این seed هر بار که دیتابیس خالی باشد
+    // اجرا می‌شود و روی Render (فایل‌سیستم موقتی) یعنی هر دیپلوی.
+    // رمز ثابت یعنی سایت عمومی همیشه با یک رمز شناخته‌شده باز می‌شود.
+    const isProduction = process.env.NODE_ENV === 'production';
+    let adminPassword = process.env.ADMIN_PASSWORD;
+    let generated = false;
+
+    if (!adminPassword || adminPassword.length < 8) {
+        adminPassword = crypto.randomBytes(12).toString('base64url');
+        generated = true;
+    }
+
+    const salt = bcrypt.genSaltSync(12);
     const transaction = db.transaction(() => {
-        insertUser.run('admin', bcrypt.hashSync('admin123', salt), 'مدیر سیستم', 'admin');
-        insertUser.run('editor', bcrypt.hashSync('editor123', salt), 'ویرایشگر', 'editor');
+        insertUser.run('admin', bcrypt.hashSync(adminPassword, salt), 'مدیر سیستم', 'admin');
+
+        // حساب نمایشی «editor» فقط در محیط توسعه ساخته می‌شود
+        if (!isProduction) {
+            insertUser.run('editor', bcrypt.hashSync('editor123', salt), 'ویرایشگر', 'editor');
+        }
 
         for (const cat of categoriesData) {
             insertCategory.run(cat.key, cat.name_fa, cat.name_en, cat.icon, cat.color, cat.sort_order);
@@ -225,8 +243,23 @@ function seed() {
 
     transaction();
     console.log('Database seeded successfully!');
-    console.log('Admin login: admin / admin123');
-    console.log('Editor login: editor / editor123');
+
+    if (generated) {
+        console.log('\n' + '='.repeat(64));
+        console.log('  حساب مدیر ساخته شد — نام کاربری: admin');
+        console.log('  رمز عبور تصادفی: ' + adminPassword);
+        console.log('');
+        console.log('  این رمز فقط همین یک بار نمایش داده می‌شود.');
+        console.log('  همین حالا ذخیره‌اش کنید و پس از ورود عوضش کنید.');
+        console.log('  برای تعیین رمز دلخواه، متغیر ADMIN_PASSWORD را تنظیم کنید.');
+        console.log('='.repeat(64) + '\n');
+    } else {
+        console.log('حساب مدیر با رمز تعیین‌شده در ADMIN_PASSWORD ساخته شد.');
+    }
+
+    if (!isProduction) {
+        console.log('حساب آزمایشی ویرایشگر (فقط در حالت توسعه): editor / editor123');
+    }
 }
 
 seed();
