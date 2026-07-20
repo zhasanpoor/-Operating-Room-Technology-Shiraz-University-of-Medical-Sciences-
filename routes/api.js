@@ -18,7 +18,7 @@ const {
 const {
     JWT_SECRET, JWT_EXPIRES_IN, BCRYPT_ROUNDS,
     LOGIN_BLOCK_AFTER, LOGIN_CAPTCHA_AFTER, LOGIN_BLOCK_MINUTES,
-    MAX_AVATAR_BYTES
+    MAX_AVATAR_BYTES, MAX_UPLOAD_BYTES
 } = require('../config');
 
 module.exports = function(db) {
@@ -63,13 +63,17 @@ const storage = multer.diskStorage({
 
 const upload = multer({
     storage,
-    limits: { fileSize: 50 * 1024 * 1024 },
+    limits: { fileSize: MAX_UPLOAD_BYTES },
     fileFilter: (req, file, cb) => {
-        const allowed = /jpeg|jpg|png|gif|webp|svg|pdf|pptx|docx|mp4|webm/;
-        const extname = allowed.test(path.extname(file.originalname).toLowerCase());
-        const mimetype = allowed.test(file.mimetype);
-        if (extname || mimetype) return cb(null, true);
-        cb('فایل پشتیبانی نمی‌شود');
+        // multer v2: خطا باید شیء Error باشد، نه رشته.
+        // هم پسوند و هم نوع MIME باید مجاز باشند (نه «یا») تا فایلی با
+        // پسوند جعلی راه پیدا نکند.
+        const allowedExt = /\.(jpe?g|png|gif|webp|pdf|pptx|docx|mp4|webm)$/i;
+        const allowedMime = /^(image\/(jpeg|png|gif|webp)|application\/pdf|application\/vnd\.openxmlformats|video\/(mp4|webm))/;
+        const okExt = allowedExt.test(file.originalname);
+        const okMime = allowedMime.test(file.mimetype);
+        if (okExt && okMime) return cb(null, true);
+        cb(new Error('این نوع فایل پشتیبانی نمی‌شود.'));
     }
 });
 
@@ -1429,23 +1433,37 @@ router.put('/operations/:id/content', authMiddleware, requireAuthor, (req, res) 
 });
 
 // Upload
-router.post('/upload', authMiddleware, upload.single('file'), (req, res) => {
-    try {
-        if (!req.file) return res.status(400).json({ error: 'فایلی ارسال نشد' });
+router.post('/upload', authMiddleware, (req, res) => {
+    // خطای multer (نوع نامجاز یا حجم زیاد) داخل همین‌جا مدیریت می‌شود تا
+    // به‌جای خطای ۵۰۰ کلی، پیام فارسی روشن به کاربر برسد.
+    upload.single('file')(req, res, (uploadErr) => {
+        if (uploadErr) {
+            const tooBig = uploadErr.code === 'LIMIT_FILE_SIZE';
+            return res.status(400).json({
+                error: tooBig
+                    ? `حجم فایل نباید بیشتر از ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} مگابایت باشد.`
+                    : (uploadErr.message || 'آپلود فایل انجام نشد.')
+            });
+        }
+        try {
+            if (!req.file) return res.status(400).json({ error: 'فایلی ارسال نشد.' });
 
-        db.prepare(`
-            INSERT INTO uploaded_files (original_name, stored_name, file_type, file_size, uploaded_by)
-            VALUES (?, ?, ?, ?, ?)
-        `).run(req.file.originalname, req.file.filename, req.file.mimetype, req.file.size, req.user.id);
+            db.prepare(`
+                INSERT INTO uploaded_files (original_name, stored_name, file_type, file_size, uploaded_by)
+                VALUES (?, ?, ?, ?, ?)
+            `).run(sanitizePlainText(req.file.originalname), req.file.filename,
+                   req.file.mimetype, req.file.size, req.user.id);
 
-        res.json({
-            url: `/uploads/${req.file.filename}`,
-            filename: req.file.originalname,
-            message: 'فایل آپلود شد'
-        });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+            res.json({
+                url: `/uploads/${req.file.filename}`,
+                filename: req.file.originalname,
+                message: 'فایل آپلود شد.'
+            });
+        } catch (err) {
+            console.error('خطا در آپلود:', err.message);
+            res.status(500).json({ error: 'ذخیرهٔ فایل انجام نشد.' });
+        }
+    });
 });
 
 router.get('/files', authMiddleware, (req, res) => {

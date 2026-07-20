@@ -15,9 +15,7 @@
     "test:permissions": "node scripts/test-permissions.js",
     "test:accounts": "node scripts/test-accounts.js",
     "test:api": "node scripts/test-content-api.js",
-    "test": "node scripts/test-jalali.js && node scripts/test-sanitize.js && node scripts/test-db-adapter.js",
-    "test:api": "node scripts/test-content-api.js",
-    "test:permissions": "node scripts/test-permissions.js"
+    "test": "node scripts/test-jalali.js && node scripts/test-sanitize.js && node scripts/test-db-adapter.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -30,7 +28,7 @@
     "jsonwebtoken": "^9.0.2",
     "mammoth": "^1.12.0",
     "morgan": "^1.10.0",
-    "multer": "^1.4.5-lts.1",
+    "multer": "^2.2.0",
     "pg": "^8.22.0",
     "quill": "^2.0.3",
     "sanitize-html": "^2.17.6",
