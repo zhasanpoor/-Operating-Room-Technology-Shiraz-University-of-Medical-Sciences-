@@ -881,8 +881,19 @@ router.post('/upload', authMiddleware, upload.single('file'), (req, res) => {
 });
 
 router.get('/files', authMiddleware, (req, res) => {
-    const files = db.prepare('SELECT * FROM uploaded_files ORDER BY created_at DESC LIMIT 100').all();
-    res.json(files);
+    try {
+        // نویسنده فقط فایل‌های خودش را می‌بیند؛ پیش از این فهرست کامل
+        // آپلودهای همهٔ کاربران به هر کسی که وارد شده بود نشان داده می‌شد.
+        const files = req.user.role === 'admin'
+            ? db.prepare(`SELECT * FROM uploaded_files
+                          ORDER BY created_at DESC LIMIT 100`).all()
+            : db.prepare(`SELECT * FROM uploaded_files WHERE uploaded_by = ?
+                          ORDER BY created_at DESC LIMIT 100`).all(req.user.id);
+        res.json(files);
+    } catch (err) {
+        console.error('خطا در خواندن فایل‌ها:', err.message);
+        res.status(500).json({ error: 'خواندن فهرست فایل‌ها ناموفق بود.' });
+    }
 });
 
 router.delete('/files/:id', authMiddleware, requireAdmin, (req, res) => {

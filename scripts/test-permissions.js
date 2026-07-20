@@ -202,6 +202,15 @@ async function main() {
     r = await fetch(`${BASE}/api/operations/${draftId}`, { headers: H(author2Token) });
     check('نویسندهٔ دیگر پیش‌نویس این نویسنده را نمی‌بیند', r.status === 404, 'HTTP ' + r.status);
 
+    console.log('\n── فایل‌ها فقط مال خود کاربر ───────────────');
+    // مدیر یک فایل آپلود می‌کند (به‌صورت مستقیم در دیتابیس شبیه‌سازی نمی‌شود،
+    // پس فقط بررسی می‌کنیم که فهرست نویسنده شامل فایل دیگران نباشد)
+    const adminFiles = await (await fetch(`${BASE}/api/files`, { headers: H(adminToken) })).json();
+    const authorFiles = await (await fetch(`${BASE}/api/files`, { headers: H(authorToken) })).json();
+    check('نویسنده فقط فایل‌های خودش را می‌بیند',
+          authorFiles.every(f => f.uploaded_by === null || f.uploaded_by !== 1),
+          `مدیر: ${adminFiles.length} فایل · نویسنده: ${authorFiles.length} فایل`);
+
     console.log('\n── اعلان و آمار داشبورد ────────────────────');
     // نویسنده باید اعلان تأیید پست قبلی را داشته باشد
     const notif = await (await fetch(`${BASE}/api/notifications`, { headers: H(authorToken) })).json();
