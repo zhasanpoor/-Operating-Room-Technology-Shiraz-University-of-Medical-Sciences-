@@ -4,11 +4,76 @@ const app = {
     categories: [],
     currentCategory: null,
     currentOperation: null,
+    user: null,
+    token: null,
 
     async init() {
+        this.token = localStorage.getItem('auth_token');
+        if (this.token) {
+            await this.checkAuth();
+        }
+        this.updateAuthUI();
         await this.loadStats();
         await this.loadCategories();
         this.bindEvents();
+    },
+
+    async checkAuth() {
+        try {
+            const res = await fetch(`${API_BASE}/auth/me`, {
+                headers: { 'Authorization': `Bearer ${this.token}` }
+            });
+            if (res.ok) {
+                this.user = await res.json();
+            } else {
+                this.token = null;
+                this.user = null;
+                localStorage.removeItem('auth_token');
+            }
+        } catch (err) {
+            this.token = null;
+            this.user = null;
+            localStorage.removeItem('auth_token');
+        }
+    },
+
+    async login(username, password) {
+        const res = await fetch(`${API_BASE}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        this.token = data.token;
+        this.user = data.user;
+        localStorage.setItem('auth_token', data.token);
+        this.updateAuthUI();
+        return data;
+    },
+
+    logout() {
+        this.token = null;
+        this.user = null;
+        localStorage.removeItem('auth_token');
+        this.updateAuthUI();
+    },
+
+    updateAuthUI() {
+        const authBtn = document.getElementById('authBtn');
+        const userInfo = document.getElementById('userInfo');
+        const userName = document.getElementById('userName');
+        const userRole = document.getElementById('userRole');
+
+        if (this.user) {
+            authBtn.classList.add('hidden');
+            userInfo.classList.remove('hidden');
+            userName.textContent = this.user.full_name || this.user.username;
+            userRole.textContent = this.user.role === 'admin' ? 'مدیر' : this.user.role === 'editor' ? 'ویرایشگر' : 'کاربر';
+        } else {
+            authBtn.classList.remove('hidden');
+            userInfo.classList.add('hidden');
+        }
     },
 
     async loadStats() {
@@ -297,10 +362,65 @@ const app = {
 
     formatText(text) {
         if (!text) return '';
-        return text
-            .replace(/\n/g, '<br>')
-            .replace(/•/g, '&bull;')
-            .replace(/o/g, '&nbsp;&nbsp;o');
+        const lines = text.split('\n');
+        let html = '';
+        let inList = false;
+        let inNumberedList = false;
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+
+            if (!trimmed) {
+                if (inList || inNumberedList) {
+                    html += '</ul>';
+                    inList = false;
+                    inNumberedList = false;
+                }
+                continue;
+            }
+
+            // Numbered section heading: ۱. ۲. ۳. or 1. 2. 3.
+            if (/^[۰-۹0-9]+[\.\)]\s/.test(trimmed)) {
+                if (inList || inNumberedList) {
+                    html += '</ul>';
+                    inList = false;
+                    inNumberedList = false;
+                }
+                const num = trimmed.match(/^([۰-۹0-9]+)[\.\)]/)[1];
+                const rest = trimmed.replace(/^[۰-۹0-9]+[\.\)]\s*/, '');
+                html += `<h3 class="content-section-title"><span class="section-number">${num}</span> ${rest}</h3>`;
+            }
+            // Bullet with - or •
+            else if (/^[-•]\s/.test(trimmed) || /^•/.test(trimmed)) {
+                if (!inList && !inNumberedList) {
+                    html += '<ul class="content-list">';
+                    inList = true;
+                }
+                const bulletText = trimmed.replace(/^[-•]\s*/, '');
+                html += `<li>${bulletText}</li>`;
+            }
+            // Sub-heading (short line ending with :)
+            else if (/^.+:$/.test(trimmed) && trimmed.length < 60 && !trimmed.startsWith('http')) {
+                if (inList || inNumberedList) {
+                    html += '</ul>';
+                    inList = false;
+                    inNumberedList = false;
+                }
+                html += `<h4 class="content-subtitle">${trimmed}</h4>`;
+            }
+            // Regular text
+            else {
+                if (inList || inNumberedList) {
+                    html += '</ul>';
+                    inList = false;
+                    inNumberedList = false;
+                }
+                html += `<p>${trimmed}</p>`;
+            }
+        }
+
+        if (inList || inNumberedList) html += '</ul>';
+        return html;
     },
 
     closeModal() {
@@ -338,6 +458,41 @@ const app = {
         document.getElementById('searchInput').addEventListener('input', (e) => {
             clearTimeout(searchTimeout);
             searchTimeout = setTimeout(() => this.handleSearch(e.target.value), 300);
+        });
+
+        document.getElementById('authBtn').addEventListener('click', () => {
+            document.getElementById('loginModal').classList.remove('hidden');
+        });
+
+        document.getElementById('loginModalClose').addEventListener('click', () => {
+            document.getElementById('loginModal').classList.add('hidden');
+        });
+
+        document.getElementById('loginModalOverlay').addEventListener('click', (e) => {
+            if (e.target === document.getElementById('loginModalOverlay')) {
+                document.getElementById('loginModal').classList.add('hidden');
+            }
+        });
+
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('loginUsername').value.trim();
+            const password = document.getElementById('loginPassword').value.trim();
+            const error = document.getElementById('loginError');
+            error.classList.add('hidden');
+
+            try {
+                await this.login(username, password);
+                document.getElementById('loginModal').classList.add('hidden');
+                document.getElementById('loginForm').reset();
+            } catch (err) {
+                error.textContent = err.message;
+                error.classList.remove('hidden');
+            }
+        });
+
+        document.getElementById('logoutBtn').addEventListener('click', () => {
+            this.logout();
         });
     },
 
