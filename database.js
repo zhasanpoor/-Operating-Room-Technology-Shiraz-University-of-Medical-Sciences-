@@ -21,6 +21,7 @@ class SqlJsWrapper {
 
     prepare(sql) {
         const sqlDb = this.sqlDb;
+        const self = this;
         return {
             run(...params) {
                 sqlDb.run(sql, params);
@@ -30,6 +31,11 @@ class SqlJsWrapper {
                     const r = sqlDb.exec('SELECT last_insert_rowid()');
                     if (r.length > 0 && r[0].values.length > 0) lastInsertRowid = r[0].values[0][0];
                 } catch(e) {}
+                // بدون این save، هر نوشتنی فقط در حافظه می‌ماند و با
+                // ری‌استارت سرویس از بین می‌رود — ویرایش محتوا، ساخت کاربر،
+                // ثبت رویداد امنیتی و... همه بی‌صدا گم می‌شدند.
+                // داخل تراکنش به تعویق می‌افتد تا حالت نیمه‌کاره ذخیره نشود.
+                self.save();
                 return { changes, lastInsertRowid };
             },
             get(...params) {
@@ -60,19 +66,25 @@ class SqlJsWrapper {
         const self = this;
         return function (...args) {
             self.sqlDb.run('BEGIN TRANSACTION');
+            self._inTransaction = true;
             try {
                 const result = fn(...args);
                 self.sqlDb.run('COMMIT');
-                self.save();
                 return result;
             } catch (err) {
                 self.sqlDb.run('ROLLBACK');
                 throw err;
+            } finally {
+                // ذخیره فقط پس از پایان تراکنش (چه COMMIT چه ROLLBACK)
+                // تا وضعیت نیمه‌کاره روی دیسک ننشیند.
+                self._inTransaction = false;
+                self.save();
             }
         };
     }
 
     save() {
+        if (this._inTransaction) return;
         try {
             const data = this.sqlDb.export();
             const buffer = Buffer.from(data);

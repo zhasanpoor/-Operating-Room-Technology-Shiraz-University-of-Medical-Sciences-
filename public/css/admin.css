@@ -367,3 +367,112 @@ body{font-family:'Vazirmatn',system-ui,sans-serif;background:var(--bg);color:var
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 ::-webkit-scrollbar-thumb:hover{background:var(--text-3)}
+
+/* ═══════════════════════════════════════════════════════════════
+   ویرایشگر متن غنی (Quill) — تطبیق تم روشن پیش‌فرض با تم تیرهٔ پنل
+   ═══════════════════════════════════════════════════════════════ */
+
+.rich-editor{
+  background:var(--bg);
+  border:1.5px solid var(--border);
+  border-top:none;
+  border-radius:0 0 var(--radius-sm) var(--radius-sm);
+  min-height:280px;
+  font-family:inherit;
+}
+.rich-editor-lg{min-height:420px}
+
+/* نوار ابزار */
+.ql-toolbar.ql-snow{
+  background:var(--bg-3);
+  border:1.5px solid var(--border);
+  border-radius:var(--radius-sm) var(--radius-sm) 0 0;
+  padding:10px;
+  font-family:inherit;
+  direction:rtl;
+  text-align:right;
+}
+.ql-container.ql-snow{border:none;font-family:inherit;font-size:14px}
+.ql-editor{
+  min-height:260px;
+  color:var(--text);
+  line-height:2;
+  padding:18px;
+}
+.rich-editor-lg .ql-editor{min-height:400px}
+.ql-editor.ql-blank::before{
+  color:var(--text-3);
+  font-style:normal;
+  right:18px;
+  left:auto;
+}
+
+/* آیکون‌ها و دکمه‌ها در تم تیره */
+.ql-snow .ql-stroke{stroke:var(--text-2)}
+.ql-snow .ql-fill,.ql-snow .ql-stroke.ql-fill{fill:var(--text-2)}
+.ql-snow .ql-picker{color:var(--text-2)}
+.ql-snow.ql-toolbar button:hover .ql-stroke,
+.ql-snow.ql-toolbar button.ql-active .ql-stroke,
+.ql-snow.ql-toolbar .ql-picker-label:hover .ql-stroke{stroke:var(--accent-2)}
+.ql-snow.ql-toolbar button:hover .ql-fill,
+.ql-snow.ql-toolbar button.ql-active .ql-fill{fill:var(--accent-2)}
+.ql-snow button:hover,.ql-snow button.ql-active{background:var(--accent-bg);border-radius:6px}
+.ql-snow .ql-picker-label:hover,.ql-snow .ql-picker-item:hover{color:var(--accent-2)}
+
+/* منوهای بازشو */
+.ql-snow .ql-picker-options{
+  background:var(--bg-4);
+  border:1px solid var(--border-2);
+  border-radius:var(--radius-xs);
+  box-shadow:var(--shadow);
+  padding:6px;
+}
+.ql-snow .ql-picker.ql-expanded .ql-picker-label{border-color:var(--border-2)}
+
+/* پنجرهٔ افزودن پیوند */
+.ql-snow .ql-tooltip{
+  background:var(--bg-4);
+  border:1px solid var(--border-2);
+  border-radius:var(--radius-xs);
+  box-shadow:var(--shadow);
+  color:var(--text);
+  direction:ltr;
+}
+.ql-snow .ql-tooltip input[type=text]{
+  background:var(--bg);
+  border:1px solid var(--border);
+  border-radius:6px;
+  color:var(--text);
+  padding:6px 8px;
+}
+.ql-snow .ql-tooltip a.ql-action,.ql-snow .ql-tooltip a.ql-remove{color:var(--accent-2)}
+
+/* محتوای داخل ویرایشگر */
+.rich-editor .ql-editor h2{font-size:22px;font-weight:800;margin:18px 0 10px;color:var(--text)}
+.rich-editor .ql-editor h3{font-size:18px;font-weight:700;margin:16px 0 8px;color:var(--text)}
+.rich-editor .ql-editor h4{font-size:16px;font-weight:600;margin:14px 0 6px;color:var(--text)}
+.rich-editor .ql-editor p{margin-bottom:10px}
+.rich-editor .ql-editor ul,.rich-editor .ql-editor ol{padding-right:24px;padding-left:0;margin-bottom:10px}
+.rich-editor .ql-editor li{margin-bottom:6px}
+.rich-editor .ql-editor blockquote{
+  border-right:3px solid var(--accent);
+  border-left:none;
+  background:var(--accent-bg);
+  padding:10px 14px;
+  margin:12px 0;
+  border-radius:var(--radius-xs);
+}
+.rich-editor .ql-editor pre.ql-syntax,.rich-editor .ql-editor pre{
+  background:var(--bg-3);
+  border:1px solid var(--border);
+  border-radius:var(--radius-xs);
+  padding:12px;
+  direction:ltr;
+  text-align:left;
+  overflow-x:auto;
+}
+.rich-editor .ql-editor img{max-width:100%;height:auto;border-radius:var(--radius-xs);margin:10px 0}
+.rich-editor .ql-editor a{color:var(--accent-2);text-decoration:underline}
+
+/* راهنمای بالای ویرایشگر */
+.editor-hint{font-size:12px;color:var(--text-3)}

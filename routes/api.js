@@ -4,11 +4,22 @@ const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const {
+    sanitizeRichText, sanitizePlainText, detectThreats, worstSeverity, validateVideoUrl
+} = require('../lib/sanitize');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'shiraz-ort-secret-key-2024';
 
 module.exports = function(db) {
 const router = express.Router();
+
+/**
+ * `undefined` را به `null` تبدیل می‌کند.
+ * درایور sql.js فقط null را می‌پذیرد و با undefined خطای بدون پیام می‌دهد.
+ */
+function nz(value) {
+    return value === undefined ? null : value;
+}
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -279,15 +290,73 @@ router.delete('/operations/:id', authMiddleware, adminOnly, (req, res) => {
 // Content
 router.put('/operations/:id/content', authMiddleware, adminOnly, (req, res) => {
     try {
-        const { description, instruments, video_url_1, video_url_2, video_title_1, video_title_2,
-                slides_url, slides_title, description_images, instruments_images } = req.body;
+        let { description, instruments, video_url_1, video_url_2, video_title_1, video_title_2,
+              slides_url, slides_title, description_images, instruments_images } = req.body;
 
         const operation = db.prepare('SELECT id FROM operations WHERE id = ?').get(req.params.id);
         if (!operation) return res.status(404).json({ error: 'عمل یافت نشد' });
 
+        // ── پاک‌سازی و اعتبارسنجی ورودی ─────────────────────────────
+        // محتوای ویرایشگر HTML است و بدون پاک‌سازی یک مسیر مستقیم XSS
+        // می‌شود: هر نویسنده می‌تواند اسکریپت تزریق کند که در مرورگر
+        // بازدیدکنندگان و ادمین اجرا شود.
+
+        // اول: گزارش تلاش حمله به ادمین (ورودی خام بررسی می‌شود)
+        const threats = detectThreats({
+            description, instruments, video_title_1, video_title_2, slides_title
+        });
+        if (threats.length > 0) {
+            try {
+                db.prepare(`INSERT INTO security_events
+                    (user_id, event_type, severity, detail, payload, ip)
+                    VALUES (?, ?, ?, ?, ?, ?)`
+                ).run(
+                    req.user.id,
+                    threats[0].type,
+                    worstSeverity(threats),
+                    'الگوی مشکوک در محتوای عمل ' + req.params.id + ': ' +
+                        threats.map(t => t.label).join('، '),
+                    threats.map(t => t.sample).join(' | ').slice(0, 500),
+                    req.ip || ''
+                );
+            } catch (logErr) {
+                console.error('ثبت رویداد امنیتی ناموفق:', logErr.message);
+            }
+        }
+
+        // دوم: پاک‌سازی. محتوای غنی با allowlist، عنوان‌ها به متن ساده.
+        if (description !== undefined && description !== null) {
+            description = sanitizeRichText(description);
+        }
+        if (instruments !== undefined && instruments !== null) {
+            instruments = sanitizeRichText(instruments);
+        }
+        for (const key of ['video_title_1', 'video_title_2', 'slides_title']) {
+            if (req.body[key] !== undefined && req.body[key] !== null) {
+                const clean = sanitizePlainText(req.body[key]);
+                if (key === 'video_title_1') video_title_1 = clean;
+                if (key === 'video_title_2') video_title_2 = clean;
+                if (key === 'slides_title') slides_title = clean;
+            }
+        }
+
+        // سوم: لینک ویدیو فقط از دامنه‌های مجاز
+        for (const [key, value] of [['video_url_1', video_url_1], ['video_url_2', video_url_2]]) {
+            if (value === undefined || value === null) continue;
+            const check = validateVideoUrl(value);
+            if (!check.ok) {
+                return res.status(400).json({ error: check.error });
+            }
+            if (key === 'video_url_1') video_url_1 = check.url;
+            else video_url_2 = check.url;
+        }
+
         const existing = db.prepare('SELECT id FROM operation_content WHERE operation_id = ?').get(req.params.id);
 
         if (existing) {
+            // مهم: درایور sql.js نمی‌تواند undefined را bind کند و خطای بدون
+            // پیام پرتاب می‌کند. nz() فیلدهای نیامده را null می‌کند تا
+            // COALESCE مقدار قبلی را نگه دارد.
             db.prepare(`
                 UPDATE operation_content SET
                     description = COALESCE(?, description),
@@ -302,8 +371,9 @@ router.put('/operations/:id/content', authMiddleware, adminOnly, (req, res) => {
                     instruments_images = COALESCE(?, instruments_images),
                     updated_at = CURRENT_TIMESTAMP
                 WHERE operation_id = ?
-            `).run(description, instruments, video_url_1, video_url_2, video_title_1, video_title_2,
-                   slides_url, slides_title, description_images, instruments_images, req.params.id);
+            `).run(nz(description), nz(instruments), nz(video_url_1), nz(video_url_2),
+                   nz(video_title_1), nz(video_title_2), nz(slides_url), nz(slides_title),
+                   nz(description_images), nz(instruments_images), req.params.id);
         } else {
             db.prepare(`
                 INSERT INTO operation_content (operation_id, description, instruments, video_url_1, video_url_2,
@@ -316,7 +386,11 @@ router.put('/operations/:id/content', authMiddleware, adminOnly, (req, res) => {
 
         res.json({ message: 'محتوا ذخیره شد' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        // خطا حتماً سمت سرور لاگ شود؛ قبلاً بی‌صدا بلعیده می‌شد و
+        // عیب‌یابی را غیرممکن می‌کرد. به کاربر پیام کلی داده می‌شود تا
+        // جزئیات داخلی سیستم فاش نشود.
+        console.error('خطا در ذخیرهٔ محتوا:', err && (err.stack || err.message || err));
+        res.status(500).json({ error: 'ذخیرهٔ محتوا انجام نشد. لطفاً دوباره تلاش کنید.' });
     }
 });
 

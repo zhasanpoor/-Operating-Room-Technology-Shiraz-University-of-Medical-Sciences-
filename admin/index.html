@@ -7,6 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/vendor/quill/quill.snow.css">
     <link rel="stylesheet" href="/css/admin.css">
 </head>
 <body>
@@ -197,22 +198,22 @@
                         <div class="editor-panels">
                             <div class="editor-panel active" id="panel-description">
                                 <div class="editor-toolbar">
-                                    <button class="toolbar-btn" onclick="insertImage('desc')" title="درج عکس">
-                                        <span>🖼️</span> درج عکس
-                                    </button>
+                                    <span class="editor-hint">
+                                        برای درج عکس از دکمهٔ 🖼️ در نوار ابزار ویرایشگر استفاده کنید
+                                    </span>
                                     <span class="char-count" id="descCharCount">0 کاراکتر</span>
                                 </div>
-                                <textarea id="editDescription" class="textarea textarea-lg" rows="18" placeholder="شرح کامل عمل جراحی را اینجا بنویسید...&#10;&#10;می‌توانید از خطوط جدید و لیست‌ها استفاده کنید."></textarea>
+                                <div class="rich-editor rich-editor-lg" id="editDescription"></div>
                                 <div class="image-preview-row" id="descImages"></div>
                             </div>
                             <div class="editor-panel" id="panel-instruments">
                                 <div class="editor-toolbar">
-                                    <button class="toolbar-btn" onclick="insertImage('instr')" title="درج عکس">
-                                        <span>🖼️</span> درج عکس
-                                    </button>
+                                    <span class="editor-hint">
+                                        هر ابزار را در یک خط بنویسید یا از لیست استفاده کنید
+                                    </span>
                                     <span class="char-count" id="instrCharCount">0 کاراکتر</span>
                                 </div>
-                                <textarea id="editInstruments" class="textarea" rows="14" placeholder="لیست ابزارهای مورد نیاز عمل..."></textarea>
+                                <div class="rich-editor" id="editInstruments"></div>
                                 <div class="image-preview-row" id="instrImages"></div>
                             </div>
                             <div class="editor-panel" id="panel-videos">
@@ -406,6 +407,8 @@
 
     <div class="toast-container" id="toastContainer"></div>
 
+    <script src="/vendor/quill/quill.js"></script>
+    <script src="/js/editor.js"></script>
     <script src="/js/admin.js"></script>
 </body>
 </html>

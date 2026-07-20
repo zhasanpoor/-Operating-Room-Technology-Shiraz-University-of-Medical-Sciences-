@@ -4,6 +4,9 @@ let currentUser=null;
 let currentContentOp=null;
 let imageInsertTarget=null;
 let allCategories=[];
+// نمونه‌های ویرایشگر متن غنی — در initEditors ساخته می‌شوند
+let descEditor=null;
+let instrEditor=null;
 
 async function api(url,options={}){const headers={'Content-Type':'application/json',...options.headers};if(token)headers['Authorization']=`Bearer ${token}`;const res=await fetch(API+url,{...options,headers});if(res.status===401){logout();throw new Error('Unauthorized')}return res.json()}
 function showPage(page){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.getElementById(`page-${page}`)?.classList.add('active');document.querySelectorAll('.nav-item[data-page]').forEach(n=>n.classList.remove('active'));document.querySelector(`[data-page="${page}"]`)?.classList.add('active');document.getElementById('breadcrumb').textContent={dashboard:'داشبورد',content:'مدیریت محتوا',users:'مدیریت کاربران',files:'مدیریت فایل‌ها'}[page]||page;closeSidebar()}
@@ -56,8 +59,8 @@ async function loadOperationContent(opId){
   const cat=allCategories.find(c=>c.key===document.getElementById('contentCategory').value);
   document.getElementById('editorHeader').innerHTML=`<h3>${op.name}</h3><p>${cat?.icon||''} ${cat?.name_fa||''} — شماره ${op.op_number}</p>`;
   document.getElementById('contentEditor').classList.remove('hidden');
-  document.getElementById('editDescription').value=op.description||'';
-  document.getElementById('editInstruments').value=op.instruments||'';
+  descEditor.setHtml(op.description||'');
+  instrEditor.setHtml(op.instruments||'');
   document.getElementById('editVideoTitle1').value=op.video_title_1||'';
   document.getElementById('editVideoUrl1').value=op.video_url_1||'';
   document.getElementById('editVideoTitle2').value=op.video_title_2||'';
@@ -72,14 +75,14 @@ async function loadOperationContent(opId){
 }
 function setSteps(active){[1,2,3].forEach(i=>{const el=document.getElementById(`step${i}`);el.classList.remove('active','done');if(i<active)el.classList.add('done');else if(i===active)el.classList.add('active')})}
 function updateCharCounts(){
-  const d=document.getElementById('editDescription').value.length;
-  const i=document.getElementById('editInstruments').value.length;
+  const d=descEditor?descEditor.length():0;
+  const i=instrEditor?instrEditor.length():0;
   document.getElementById('descCharCount').textContent=`${d.toLocaleString('fa-IR')} کاراکتر`;
   document.getElementById('instrCharCount').textContent=`${i.toLocaleString('fa-IR')} کاراکتر`;
 }
 function updateTabStatuses(){
-  const d=document.getElementById('editDescription').value.trim();
-  const i=document.getElementById('editInstruments').value.trim();
+  const d=descEditor?descEditor.getText():'';
+  const i=instrEditor?instrEditor.getText():'';
   const v1=document.getElementById('editVideoUrl1').value.trim();
   const v2=document.getElementById('editVideoUrl2').value.trim();
   const s=document.getElementById('editSlidesUrl').value.trim();
@@ -108,7 +111,7 @@ async function saveContent(){
   if(!currentContentOp)return;
   const btn=document.getElementById('saveContentBtn');
   btn.disabled=true;btn.innerHTML='<span class="spinner-sm"></span>در حال ذخیره...';
-  const body={description:document.getElementById('editDescription').value,instruments:document.getElementById('editInstruments').value,video_url_1:document.getElementById('editVideoUrl1').value,video_title_1:document.getElementById('editVideoTitle1').value,video_url_2:document.getElementById('editVideoUrl2').value,video_title_2:document.getElementById('editVideoTitle2').value,slides_url:document.getElementById('editSlidesUrl').value,slides_title:document.getElementById('editSlidesTitle').value};
+  const body={description:descEditor.getHtml(),instruments:instrEditor.getHtml(),video_url_1:document.getElementById('editVideoUrl1').value,video_title_1:document.getElementById('editVideoTitle1').value,video_url_2:document.getElementById('editVideoUrl2').value,video_title_2:document.getElementById('editVideoTitle2').value,slides_url:document.getElementById('editSlidesUrl').value,slides_title:document.getElementById('editSlidesTitle').value};
   try{await api(`/operations/${currentContentOp.id}/content`,{method:'PUT',body:JSON.stringify(body)});toast('محتوا با موفقیت ذخیره شد');updateTabStatuses()}catch(e){toast('خطا در ذخیره: '+e.message,'error')}
   btn.disabled=false;btn.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg> ذخیره تغییرات';
 }
@@ -143,7 +146,47 @@ async function deleteFile(id){if(!confirm('حذف فایل؟'))return;await api(
 // Image insertion
 function insertImage(target){imageInsertTarget=target;openModal('imageUploadModal');loadImageLibrary()}
 async function loadImageLibrary(){const files=await api('/files');const images=files.filter(f=>f.file_type?.startsWith('image/'));document.getElementById('imageLibrary').innerHTML=images.map(f=>`<img src="/uploads/${f.stored_name}" class="file-thumb" onclick="selectImage('/uploads/${f.stored_name}')" alt="">`).join('')||'<p style="color:var(--text-3);text-align:center;padding:30px;grid-column:1/-1">هنوز عکسی آپلود نشده</p>'}
-function selectImage(url){const ta=imageInsertTarget==='desc'?document.getElementById('editDescription'):document.getElementById('editInstruments');ta.value+='\n[تصویر: '+url+']\n';closeModal('imageUploadModal');updateCharCounts();toast('تصویر درج شد')}
+// انتخاب عکس از کتابخانه و درج واقعی داخل ویرایشگر.
+// نسخهٔ قبلی متن «[تصویر: ...]» می‌گذاشت که تصویر نبود، فقط یک نشانهٔ متنی.
+function selectImage(url){
+  const editor=imageInsertTarget==='desc'?descEditor:instrEditor;
+  if(!editor){toast('ویرایشگر آماده نیست','error');return}
+  const q=editor.quill;
+  const range=q.getSelection(true);
+  q.insertEmbed(range?range.index:q.getLength(),'image',url,'user');
+  closeModal('imageUploadModal');
+  updateCharCounts();
+  toast('تصویر درج شد');
+}
+
+/** آپلود تصویر از داخل ویرایشگر؛ نشانی فایل ذخیره‌شده را برمی‌گرداند. */
+async function uploadEditorImage(file){
+  if(file.size>8*1024*1024)throw new Error('حجم تصویر نباید بیشتر از ۸ مگابایت باشد.');
+  const fd=new FormData();
+  fd.append('file',file);
+  const res=await fetch(`${API}/upload`,{method:'POST',headers:{'Authorization':`Bearer ${token}`},body:fd});
+  if(!res.ok){
+    const err=await res.json().catch(()=>({}));
+    throw new Error(err.error||'آپلود تصویر انجام نشد.');
+  }
+  const data=await res.json();
+  return data.url;
+}
+
+/** ویرایشگرهای متن غنی را می‌سازد (یک بار، هنگام بارگذاری صفحه). */
+function initEditors(){
+  const onEdit=()=>{updateCharCounts();updateTabStatuses()};
+  descEditor=RichEditor.create('#editDescription',{
+    placeholder:'شرح کامل عمل جراحی را اینجا بنویسید…',
+    onUpload:uploadEditorImage,
+    onChange:onEdit
+  });
+  instrEditor=RichEditor.create('#editInstruments',{
+    placeholder:'لیست ابزارهای مورد نیاز عمل…',
+    onUpload:uploadEditorImage,
+    onChange:onEdit
+  });
+}
 
 // Init
 document.addEventListener('DOMContentLoaded',async()=>{
@@ -180,8 +223,8 @@ document.addEventListener('DOMContentLoaded',async()=>{
   document.getElementById('editVideoUrl1').addEventListener('input',()=>{updateVideoPreview('editVideoUrl1','videoPreview1');updateTabStatuses()});
   document.getElementById('editVideoUrl2').addEventListener('input',()=>{updateVideoPreview('editVideoUrl2','videoPreview2');updateTabStatuses()});
   document.getElementById('editSlidesUrl').addEventListener('input',()=>{updateSlidesPreview();updateTabStatuses()});
-  document.getElementById('editDescription').addEventListener('input',()=>{updateCharCounts();updateTabStatuses()});
-  document.getElementById('editInstruments').addEventListener('input',()=>{updateCharCounts();updateTabStatuses()});
+  // ویرایشگرهای غنی خودشان از طریق onChange تغییرات را گزارش می‌دهند
+  initEditors();
 
   document.getElementById('saveContentBtn').addEventListener('click',saveContent);
   document.getElementById('addUserBtn').addEventListener('click',()=>openModal('addUserModal'));

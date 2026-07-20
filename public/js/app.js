@@ -362,6 +362,18 @@ const app = {
 
     formatText(text) {
         if (!text) return '';
+
+        // محتوای تولیدشده با ویرایشگر جدید از قبل HTML است و همان‌طور
+        // نمایش داده می‌شود. محتوای قدیمی (۱۴۳ عمل seed شده) متن ساده با
+        // خط جدید است و باید مثل قبل قالب‌بندی شود.
+        //
+        // ایمنی: درج مستقیم فقط به این دلیل مجاز است که سرور هنگام ذخیره
+        // محتوا را با lib/sanitize.js پاک می‌کند. اگر روزی آن پاک‌سازی
+        // برداشته شود، این خط تبدیل به آسیب‌پذیری XSS می‌شود.
+        if (/<(p|h[1-6]|ul|ol|li|div|br|strong|em|b|i|u|blockquote|pre|table|img|span)\b/i.test(text)) {
+            return text;
+        }
+
         const lines = text.split('\n');
         let html = '';
         let inList = false;
