@@ -383,55 +383,75 @@ function describeDbError(err) {
     }
 }
 
+// استخر اتصال Postgres فقط یک بار ساخته و بین درخواست‌ها بازاستفاده می‌شود.
+// ساختن استخر تازه به‌ازای هر درخواست، سقف اتصال‌های پلن رایگان را
+// خیلی زود پر می‌کند (health check هر چند ثانیه یک بار صدا زده می‌شود).
+let _healthPool = null;
+function getHealthPool(url) {
+    if (!_healthPool) {
+        const { Pool } = require('pg');
+        _healthPool = new Pool({
+            connectionString: url,
+            ssl: url.includes('localhost') ? false : { rejectUnauthorized: false },
+            connectionTimeoutMillis: 8000,
+            max: 1,
+            idleTimeoutMillis: 10000
+        });
+        _healthPool.on('error', () => { /* خطای بی‌صدا نباید پروسه را بکشد */ });
+    }
+    return _healthPool;
+}
+
+// نتیجهٔ بررسی دیتابیس ۳۰ ثانیه کش می‌شود تا health checkهای پیاپی
+// به دیتابیس فشار نیاورند.
+let _healthCache = { at: 0, value: null };
+const HEALTH_CACHE_MS = 30000;
+
 /**
  * بررسی سلامت سرویس — برای اطمینان از اینکه Postgres درست وصل شده.
  * هیچ اطلاعات محرمانه‌ای (آدرس، کاربر، رمز) برگردانده نمی‌شود.
  */
 router.get('/health', async (req, res) => {
-    const report = {
-        status: 'ok',
-        time: new Date().toISOString(),
-        database: {}
-    };
-
     const url = process.env.DATABASE_URL;
-    report.database.configured = !!url;
 
     if (!url) {
-        report.status = 'degraded';
-        report.database.engine = 'sqlite';
-        report.database.persistent = false;
-        report.database.warning =
-            'DATABASE_URL تنظیم نشده — داده‌ها با هر دیپلوی پاک می‌شوند.';
-        return res.json(report);
+        return res.json({
+            status: 'degraded',
+            time: new Date().toISOString(),
+            database: {
+                configured: false,
+                engine: 'sqlite',
+                persistent: false,
+                warning: 'DATABASE_URL تنظیم نشده — داده‌ها با هر دیپلوی پاک می‌شوند.'
+            }
+        });
     }
 
-    report.database.engine = 'postgres';
+    // پاسخ کش‌شده اگر تازه است
+    if (_healthCache.value && Date.now() - _healthCache.at < HEALTH_CACHE_MS) {
+        return res.json({ ..._healthCache.value, cached: true });
+    }
 
-    let pool;
+    const database = { configured: true, engine: 'postgres' };
+    let status = 'ok';
+
     try {
-        const { Pool } = require('pg');
-        pool = new Pool({
-            connectionString: url,
-            ssl: url.includes('localhost') ? false : { rejectUnauthorized: false },
-            connectionTimeoutMillis: 8000,
-            max: 1
-        });
-        const result = await pool.query('SELECT version() AS version');
-        report.database.connected = true;
-        report.database.persistent = true;
-        report.database.version =
+        const result = await getHealthPool(url).query('SELECT version() AS version');
+        database.connected = true;
+        database.persistent = true;
+        database.version =
             String(result.rows[0].version).split(' ').slice(0, 2).join(' ');
     } catch (err) {
-        report.status = 'degraded';
-        report.database.connected = false;
-        report.database.error = describeDbError(err);
-    } finally {
-        if (pool) pool.end().catch(() => {});
+        status = 'degraded';
+        database.connected = false;
+        database.error = describeDbError(err);
     }
 
+    const report = { status, time: new Date().toISOString(), database };
+    _healthCache = { at: Date.now(), value: report };
+
     // همیشه ۲۰۰ برمی‌گردد و وضعیت واقعی در بدنهٔ پاسخ است.
-    // اگر روزی Render این مسیر را به‌عنوان health check استفاده کند،
+    // چون این مسیر به‌عنوان healthCheckPath در render.yaml ثبت شده،
     // پاسخ ۵۰۳ باعث شکست دیپلوی یا ری‌استارت پیاپی سرویس می‌شود.
     res.json(report);
 });

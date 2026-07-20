@@ -1,11 +1,37 @@
+# پیکربندی زیرساخت روی Render (Blueprint)
+#
+# نکتهٔ مهم: بخش `databases` باعث می‌شود Render خودش دیتابیس Postgres را
+# بسازد و رشتهٔ اتصالش را از طریق `fromDatabase` به سرویس وب تزریق کند.
+# به این ترتیب رمز دیتابیس هرگز دستی کپی نمی‌شود و در گیت هم نمی‌آید.
+
+databases:
+  - name: ort-db
+    databaseName: ort_db      # فقط حروف کوچک، عدد و زیرخط مجاز است
+    user: ort_user
+    plan: free
+    # ⚠️ پلن رایگان Postgres در Render بعد از ۳۰ روز منقضی می‌شود.
+    #    برای سایت دائمی باید به پلن پولی ارتقا داده شود.
+
 services:
   - type: web
     name: operating-room-technology
     runtime: node
+    plan: free
     buildCommand: npm install
     startCommand: node server.js
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
+
+      # کلید امضای توکن‌های ورود — Render یک مقدار تصادفی قوی می‌سازد
+      # و آن را بین دیپلوی‌ها ثابت نگه می‌دارد.
       - key: JWT_SECRET
         generateValue: true
+
+      # آدرس اتصال دیتابیس، مستقیماً از سرویس Postgres بالا.
+      # Render خودش مقدار را پر می‌کند؛ نه در گیت می‌آید نه دستی وارد می‌شود.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ort-db
+          property: connectionString
