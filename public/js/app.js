@@ -17,6 +17,7 @@ const app = {
         await this.loadStats();
         await this.loadCategories();
         this.bindEvents();
+        this.maybeShowWelcome();
     },
 
     async checkAuth() {
@@ -158,6 +159,58 @@ const app = {
 
     faNum(n) { return String(n).replace(/[0-9]/g, d => '۰۱۲۳۴۵۶۷۸۹'[d]); },
     esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; },
+
+    // ── پاپ‌آپ خوش‌آمدگویی برای بازدیدکنندهٔ تازه‌وارد ────────────
+    maybeShowWelcome() {
+        // فقط یک بار، و فقط برای مهمان (کاربر واردشده لازمش ندارد)
+        if (localStorage.getItem('welcomed') === '1') return;
+        if (this.user) { localStorage.setItem('welcomed', '1'); return; }
+
+        const steps = [
+            { icon: '🏥', title: 'به سایت تکنولوژی اتاق عمل خوش اومدی!',
+              text: 'اینجا انواع عمل‌های جراحی رو با شرح کامل، وسایل مورد نیاز و فیلم آموزشی می‌بینی.' },
+            { icon: '🔎', title: 'دنبال یه عمل خاصی؟',
+              text: 'از کادر جستجوی بالای صفحه اسم عمل رو بنویس، یا از بین دسته‌بندی‌ها بگرد.' },
+            { icon: '🎬', title: 'همه‌چی همین‌جا',
+              text: 'شرح عمل، لیست ابزارها، فیلم یوتیوب و آپارات و فایل ارائه — همه داخل خود سایت نمایش داده می‌شن.' },
+            { icon: '✍️', title: 'دوست داری مشارکت کنی؟',
+              text: 'ثبت‌نام کن و از پروفایلت درخواست نویسندگی بده تا خودت هم مطلب اضافه کنی!' }
+        ];
+        let idx = 0;
+
+        const overlay = document.createElement('div');
+        overlay.className = 'welcome-overlay';
+        overlay.innerHTML = `
+            <div class="welcome-card">
+                <button class="welcome-skip" id="welcomeSkip">رد کردن</button>
+                <div class="welcome-icon" id="wIcon"></div>
+                <h2 id="wTitle"></h2>
+                <p id="wText"></p>
+                <div class="welcome-dots" id="wDots"></div>
+                <div class="welcome-actions">
+                    <button class="welcome-next" id="wNext">بعدی</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+
+        const render = () => {
+            const s = steps[idx];
+            overlay.querySelector('#wIcon').textContent = s.icon;
+            overlay.querySelector('#wTitle').textContent = s.title;
+            overlay.querySelector('#wText').textContent = s.text;
+            overlay.querySelector('#wDots').innerHTML = steps.map((_, i) =>
+                `<span class="wdot ${i === idx ? 'active' : ''}"></span>`).join('');
+            overlay.querySelector('#wNext').textContent = idx === steps.length - 1 ? 'شروع می‌کنم! 🚀' : 'بعدی';
+        };
+        const close = () => { localStorage.setItem('welcomed', '1'); overlay.remove(); };
+
+        overlay.querySelector('#welcomeSkip').addEventListener('click', close);
+        overlay.querySelector('#wNext').addEventListener('click', () => {
+            if (idx < steps.length - 1) { idx++; render(); } else close();
+        });
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+        render();
+    },
 
     async loadStats() {
         try {
