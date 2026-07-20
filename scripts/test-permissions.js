@@ -171,6 +171,53 @@ async function main() {
         console.log('  (غیرفعال‌سازی از طریق API هنوز پیاده نشده — فاز ۱)');
     }
 
+    console.log('\n── نشت نکردن پیش‌نویس به سایت عمومی ────────');
+    // نویسنده یک پیش‌نویس جدید می‌سازد (ارسال نمی‌کند)
+    r = await fetch(`${BASE}/api/operations`, {
+        method: 'POST', headers: H(authorToken),
+        body: JSON.stringify({ category_id: 2, op_number: 'SECRET-1', name: 'پیش‌نویس محرمانه' })
+    });
+    const draftId = r.ok ? (await r.json()).id : null;
+    check('نویسنده پیش‌نویس ساخت', !!draftId);
+
+    // مهمان (بدون توکن) نباید پیش‌نویس را ببیند
+    const publicOps = await (await fetch(`${BASE}/api/operations`)).json();
+    check('مهمان پیش‌نویس را در لیست نمی‌بیند',
+          !publicOps.some(o => o.id === draftId),
+          'تعداد عمل عمومی: ' + publicOps.length);
+
+    r = await fetch(`${BASE}/api/operations/${draftId}`);
+    check('مهمان با آدرس مستقیم هم پیش‌نویس را نمی‌بیند', r.status === 404, 'HTTP ' + r.status);
+
+    // ولی خود نویسنده باید ببیند
+    r = await fetch(`${BASE}/api/operations/${draftId}`, { headers: H(authorToken) });
+    check('نویسنده پیش‌نویس خودش را می‌بیند', r.ok, 'HTTP ' + r.status);
+
+    // نویسندهٔ دیگر نباید ببیند — یک نویسنده دوم می‌سازیم
+    await fetch(`${BASE}/api/auth/register`, {
+        method: 'POST', headers: H(adminToken),
+        body: JSON.stringify({ username: 'author2', password: 'Author2Pass!', full_name: 'نویسندهٔ دوم', role: 'editor' })
+    });
+    const author2Token = await login('author2', 'Author2Pass!');
+    r = await fetch(`${BASE}/api/operations/${draftId}`, { headers: H(author2Token) });
+    check('نویسندهٔ دیگر پیش‌نویس این نویسنده را نمی‌بیند', r.status === 404, 'HTTP ' + r.status);
+
+    console.log('\n── اعلان و آمار داشبورد ────────────────────');
+    // نویسنده باید اعلان تأیید پست قبلی را داشته باشد
+    const notif = await (await fetch(`${BASE}/api/notifications`, { headers: H(authorToken) })).json();
+    check('نویسنده اعلان دارد', notif.notifications.length > 0,
+          'تعداد: ' + notif.notifications.length);
+    check('شمارندهٔ اعلان نخوانده کار می‌کند', typeof notif.unread === 'number', String(notif.unread));
+
+    const dash = await (await fetch(`${BASE}/api/dashboard-stats`, { headers: H(authorToken) })).json();
+    check('آمار داشبورد نویسنده برمی‌گردد', dash.role === 'editor' && dash.stats.total >= 1,
+          JSON.stringify(dash.stats));
+
+    const adminDash = await (await fetch(`${BASE}/api/dashboard-stats`, { headers: H(adminToken) })).json();
+    check('آمار داشبورد مدیر شامل صف بررسی است',
+          adminDash.role === 'admin' && typeof adminDash.stats.pending === 'number',
+          JSON.stringify(adminDash.stats));
+
     console.log(`\n${'═'.repeat(50)}`);
     console.log(`نتیجه: ${pass} قبول · ${fail} رد`);
     process.exitCode = fail > 0 ? 1 : 0;

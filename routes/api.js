@@ -136,6 +136,45 @@ function checkOperationAccess(db, user, operationId) {
     return { ok: true, operation };
 }
 
+/**
+ * احراز هویت اختیاری — برای مسیرهای عمومی که خروجی‌شان به نقش بستگی دارد.
+ * توکن نامعتبر خطا نمی‌دهد؛ فقط کاربر مهمان حساب می‌شود.
+ */
+function optionalAuth(req, res, next) {
+    const token = req.headers.authorization?.replace('Bearer ', '') || req.cookies?.token;
+    req.user = null;
+    if (token) {
+        try {
+            const decoded = jwt.verify(token, JWT_SECRET);
+            const fresh = db.prepare(
+                'SELECT id, username, full_name, role, is_active FROM users WHERE id = ?'
+            ).get(decoded.id);
+            if (fresh && fresh.is_active !== 0) req.user = fresh;
+        } catch (e) { /* مهمان */ }
+    }
+    next();
+}
+
+/**
+ * شرط SQL دیده شدن پست بر اساس نقش.
+ *
+ * بدون این فیلتر، پیش‌نویس‌های نویسنده‌ها در سایت عمومی نشت می‌کنند.
+ *   • مهمان و کاربر عادی: فقط تأییدشده‌ها
+ *   • نویسنده: تأییدشده‌ها + همهٔ پست‌های خودش (با هر وضعیتی)
+ *   • مدیر: همه‌چیز
+ *
+ * @returns {{sql:string, params:Array}}
+ */
+function visibilityFilter(user) {
+    if (user && user.role === 'admin') {
+        return { sql: '1=1', params: [] };
+    }
+    if (user && user.role === 'editor') {
+        return { sql: "(o.status = 'approved' OR o.author_id = ?)", params: [user.id] };
+    }
+    return { sql: "o.status = 'approved'", params: [] };
+}
+
 // Auth
 router.post('/auth/login', async (req, res) => {
     try {
@@ -204,35 +243,39 @@ router.delete('/auth/users/:id', authMiddleware, requireAdmin, (req, res) => {
 });
 
 // Categories
-router.get('/categories', (req, res) => {
+router.get('/categories', optionalAuth, (req, res) => {
     try {
+        const vis = visibilityFilter(req.user);
         const categories = db.prepare(`
             SELECT c.*, COUNT(o.id) as operation_count
             FROM categories c
-            LEFT JOIN operations o ON c.id = o.category_id
+            LEFT JOIN operations o ON c.id = o.category_id AND ${vis.sql}
             GROUP BY c.id
             ORDER BY c.sort_order
-        `).all();
+        `).all(...vis.params);
         res.json(categories);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-router.get('/categories/:key', (req, res) => {
+router.get('/categories/:key', optionalAuth, (req, res) => {
     try {
         const category = db.prepare('SELECT * FROM categories WHERE key = ?').get(req.params.key);
         if (!category) return res.status(404).json({ error: 'دسته‌بندی یافت نشد' });
 
+        const vis = visibilityFilter(req.user);
         const operations = db.prepare(`
             SELECT o.*, oc.description, oc.instruments, oc.video_url_1, oc.video_url_2,
                    oc.video_title_1, oc.video_title_2, oc.slides_url, oc.slides_title,
-                   oc.description_images, oc.instruments_images
+                   oc.description_images, oc.instruments_images,
+                   u.full_name AS author_name
             FROM operations o
             LEFT JOIN operation_content oc ON o.id = oc.operation_id
-            WHERE o.category_id = ?
+            LEFT JOIN users u ON o.author_id = u.id
+            WHERE o.category_id = ? AND ${vis.sql}
             ORDER BY o.sort_order
-        `).all(category.id);
+        `).all(category.id, ...vis.params);
 
         res.json({ ...category, operations });
     } catch (err) {
@@ -264,21 +307,25 @@ router.delete('/categories/:id', authMiddleware, requireAdmin, (req, res) => {
 });
 
 // Operations
-router.get('/operations', (req, res) => {
+router.get('/operations', optionalAuth, (req, res) => {
     try {
-        const { search, category } = req.query;
+        const { search, category, mine, status } = req.query;
+        const vis = visibilityFilter(req.user);
+
         let query = `
             SELECT o.*, c.name_fa as category_name_fa, c.name_en as category_name_en,
                    c.key as category_key, c.icon as category_icon, c.color as category_color,
                    oc.description, oc.instruments, oc.video_url_1, oc.video_url_2,
                    oc.video_title_1, oc.video_title_2, oc.slides_url, oc.slides_title,
-                   oc.description_images, oc.instruments_images
+                   oc.description_images, oc.instruments_images,
+                   u.full_name AS author_name
             FROM operations o
             JOIN categories c ON o.category_id = c.id
             LEFT JOIN operation_content oc ON o.id = oc.operation_id
+            LEFT JOIN users u ON o.author_id = u.id
         `;
-        const params = [];
-        const conditions = [];
+        const params = [...vis.params];
+        const conditions = [vis.sql];
 
         if (search) {
             conditions.push('(o.name LIKE ? OR o.op_number LIKE ?)');
@@ -288,10 +335,17 @@ router.get('/operations', (req, res) => {
             conditions.push('c.key = ?');
             params.push(category);
         }
-
-        if (conditions.length > 0) {
-            query += ' WHERE ' + conditions.join(' AND ');
+        // فیلترهای پنل: پست‌های خودم / وضعیت مشخص (فقط برای واردشده‌ها)
+        if (mine === '1' && req.user) {
+            conditions.push('o.author_id = ?');
+            params.push(req.user.id);
         }
+        if (status && req.user) {
+            conditions.push('o.status = ?');
+            params.push(status);
+        }
+
+        query += ' WHERE ' + conditions.join(' AND ');
         query += ' ORDER BY c.sort_order, o.sort_order';
 
         const operations = db.prepare(query).all(...params);
@@ -301,19 +355,22 @@ router.get('/operations', (req, res) => {
     }
 });
 
-router.get('/operations/:id', (req, res) => {
+router.get('/operations/:id', optionalAuth, (req, res) => {
     try {
+        const vis = visibilityFilter(req.user);
         const operation = db.prepare(`
             SELECT o.*, c.name_fa as category_name_fa, c.name_en as category_name_en,
                    c.key as category_key, c.icon as category_icon, c.color as category_color,
                    oc.description, oc.instruments, oc.video_url_1, oc.video_url_2,
                    oc.video_title_1, oc.video_title_2, oc.slides_url, oc.slides_title,
-                   oc.description_images, oc.instruments_images
+                   oc.description_images, oc.instruments_images,
+                   u.full_name AS author_name
             FROM operations o
             JOIN categories c ON o.category_id = c.id
             LEFT JOIN operation_content oc ON o.id = oc.operation_id
-            WHERE o.id = ?
-        `).get(req.params.id);
+            LEFT JOIN users u ON o.author_id = u.id
+            WHERE o.id = ? AND ${vis.sql}
+        `).get(req.params.id, ...vis.params);
 
         if (!operation) return res.status(404).json({ error: 'عمل یافت نشد' });
         res.json(operation);
@@ -535,6 +592,160 @@ router.get('/review-queue', authMiddleware, requireAdmin, (req, res) => {
         res.json(queue);
     } catch (err) {
         res.status(500).json({ error: 'خواندن صف بررسی ناموفق بود.' });
+    }
+});
+
+/** کامنت‌های بررسی یک پست — مدیر یا نویسندهٔ همان پست. */
+router.get('/operations/:id/comments', authMiddleware, (req, res) => {
+    try {
+        const operation = db.prepare(
+            'SELECT id, author_id FROM operations WHERE id = ?'
+        ).get(req.params.id);
+        if (!operation) return res.status(404).json({ error: 'این عمل جراحی پیدا نشد.' });
+
+        if (req.user.role !== 'admin' && operation.author_id !== req.user.id) {
+            return res.status(403).json({ error: 'گفتگوی این پست به شما مربوط نیست.' });
+        }
+
+        const comments = db.prepare(`
+            SELECT pc.id, pc.body, pc.kind, pc.created_at,
+                   u.full_name AS user_name, u.role AS user_role
+            FROM post_comments pc
+            JOIN users u ON pc.user_id = u.id
+            WHERE pc.operation_id = ?
+            ORDER BY pc.created_at ASC
+        `).all(req.params.id);
+        res.json(comments);
+    } catch (err) {
+        res.status(500).json({ error: 'خواندن گفتگو ناموفق بود.' });
+    }
+});
+
+/** پاسخ روی گفتگوی پست — نویسندهٔ همان پست یا مدیر. */
+router.post('/operations/:id/comments', authMiddleware, (req, res) => {
+    try {
+        const operation = db.prepare(
+            'SELECT id, author_id, name FROM operations WHERE id = ?'
+        ).get(req.params.id);
+        if (!operation) return res.status(404).json({ error: 'این عمل جراحی پیدا نشد.' });
+
+        const isAdmin = req.user.role === 'admin';
+        if (!isAdmin && operation.author_id !== req.user.id) {
+            return res.status(403).json({ error: 'گفتگوی این پست به شما مربوط نیست.' });
+        }
+
+        const body = sanitizePlainText(req.body.body || '').slice(0, 2000);
+        if (!body) return res.status(400).json({ error: 'متن پیام خالی است.' });
+
+        db.prepare(`INSERT INTO post_comments (operation_id, user_id, body, kind)
+                    VALUES (?, ?, ?, ?)`)
+          .run(req.params.id, req.user.id, body, isAdmin ? 'review' : 'reply');
+
+        // طرف مقابل گفتگو خبردار شود
+        const targetUserId = isAdmin
+            ? operation.author_id
+            : db.prepare("SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").get()?.id;
+        if (targetUserId) {
+            db.prepare(`INSERT INTO notifications (user_id, title, body, icon, link)
+                        VALUES (?, ?, ?, '💬', ?)`)
+              .run(targetUserId,
+                   'پیام جدید روی پست',
+                   `«${operation.name}»: ${body.slice(0, 80)}`,
+                   '/dashboard/posts/' + operation.id);
+        }
+
+        res.json({ message: 'پیامت ثبت شد.' });
+    } catch (err) {
+        console.error('خطا در ثبت کامنت:', err.message);
+        res.status(500).json({ error: 'ثبت پیام انجام نشد.' });
+    }
+});
+
+// ── اعلان‌ها ────────────────────────────────────────────────────────
+
+/** اعلان‌های خود کاربر — جدیدترین اول. */
+router.get('/notifications', authMiddleware, (req, res) => {
+    try {
+        const notifications = db.prepare(`
+            SELECT id, title, body, icon, link, is_read, created_at
+            FROM notifications WHERE user_id = ?
+            ORDER BY created_at DESC LIMIT 50
+        `).all(req.user.id);
+        const unread = db.prepare(
+            'SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND is_read = 0'
+        ).get(req.user.id).c;
+        res.json({ notifications, unread });
+    } catch (err) {
+        res.status(500).json({ error: 'خواندن اعلان‌ها ناموفق بود.' });
+    }
+});
+
+/** همهٔ اعلان‌های کاربر خوانده‌شده علامت می‌خورند. */
+router.post('/notifications/read-all', authMiddleware, (req, res) => {
+    try {
+        db.prepare('UPDATE notifications SET is_read = 1 WHERE user_id = ?').run(req.user.id);
+        res.json({ message: 'همه خوانده شد.' });
+    } catch (err) {
+        res.status(500).json({ error: 'به‌روزرسانی اعلان‌ها ناموفق بود.' });
+    }
+});
+
+// ── آمار داشبورد ────────────────────────────────────────────────────
+
+/**
+ * آمار داشبورد بر اساس نقش.
+ * مدیر: کل سیستم + صف بررسی + رویدادهای امنیتی باز.
+ * نویسنده: فقط آمار پست‌های خودش.
+ */
+router.get('/dashboard-stats', authMiddleware, (req, res) => {
+    try {
+        if (req.user.role === 'admin') {
+            const byStatus = db.prepare(`
+                SELECT status, COUNT(*) AS c FROM operations GROUP BY status
+            `).all();
+            const stats = db.prepare(`
+                SELECT
+                    (SELECT COUNT(*) FROM categories) AS categories,
+                    (SELECT COUNT(*) FROM operations) AS operations,
+                    (SELECT COUNT(*) FROM operation_content
+                     WHERE description IS NOT NULL AND description != '') AS with_content,
+                    (SELECT COUNT(*) FROM users) AS users,
+                    (SELECT COUNT(*) FROM users WHERE role = 'editor') AS authors,
+                    (SELECT COUNT(*) FROM operations WHERE status = 'pending') AS pending,
+                    (SELECT COUNT(*) FROM security_events WHERE resolved = 0) AS open_security_events,
+                    (SELECT COUNT(*) FROM users
+                     WHERE author_request_status = 'pending') AS author_requests
+            `).get();
+            const perCategory = db.prepare(`
+                SELECT c.name_fa AS name, c.icon, c.color, COUNT(o.id) AS count
+                FROM categories c
+                LEFT JOIN operations o ON o.category_id = c.id
+                GROUP BY c.id ORDER BY c.sort_order
+            `).all();
+            const recent = db.prepare(`
+                SELECT a.action, a.detail, a.created_at, u.full_name AS user_name
+                FROM audit_log a LEFT JOIN users u ON a.user_id = u.id
+                ORDER BY a.created_at DESC LIMIT 10
+            `).all();
+            return res.json({ role: 'admin', stats, byStatus, perCategory, recent });
+        }
+
+        // نویسنده: آمار خودش
+        const mine = db.prepare(`
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+                SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) AS drafts,
+                SUM(CASE WHEN status = 'changes_requested' THEN 1 ELSE 0 END) AS needs_changes,
+                SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
+                COALESCE(SUM(view_count), 0) AS views
+            FROM operations WHERE author_id = ?
+        `).get(req.user.id);
+        res.json({ role: req.user.role, stats: mine });
+    } catch (err) {
+        console.error('خطا در آمار داشبورد:', err.message);
+        res.status(500).json({ error: 'خواندن آمار ناموفق بود.' });
     }
 });
 
