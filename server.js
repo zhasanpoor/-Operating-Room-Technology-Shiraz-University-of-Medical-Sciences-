@@ -102,6 +102,68 @@ async function main() {
         res.sendFile(path.join(__dirname, 'admin', 'index.html'));
     });
 
+    // ── سئو ─────────────────────────────────────────────────────────
+    const seo = require('./lib/seo');
+    const fsp = require('fs');
+
+    /** نشانی پایهٔ سایت — از روی درخواست ساخته می‌شود تا با هر دامنه‌ای کار کند. */
+    function baseUrlOf(req) {
+        const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+        return `${proto}://${req.get('host')}`;
+    }
+
+    app.get('/sitemap.xml', (req, res) => {
+        try {
+            res.type('application/xml').send(seo.buildSitemap(db, baseUrlOf(req)));
+        } catch (err) {
+            console.error('خطا در ساخت نقشهٔ سایت:', err.message);
+            res.status(500).type('text/plain').send('sitemap error');
+        }
+    });
+
+    app.get('/robots.txt', (req, res) => {
+        res.type('text/plain').send(seo.buildRobots(baseUrlOf(req)));
+    });
+
+    // قالب صفحهٔ اصلی یک بار خوانده و در حافظه نگه داشته می‌شود
+    const indexPath = path.join(__dirname, 'public', 'index.html');
+    let indexTemplate = fsp.readFileSync(indexPath, 'utf8');
+
+    /**
+     * متاتگ‌ها را داخل HTML تزریق می‌کند.
+     * ربات‌های شبکه‌های اجتماعی جاوااسکریپت اجرا نمی‌کنند، پس عنوان و
+     * توضیح باید در همان HTML اولیه باشد وگرنه لینک اشتراک‌گذاری‌شده
+     * بدون عنوان و توضیح نمایش داده می‌شود.
+     */
+    function renderPage(metaHtml) {
+        return indexTemplate.replace(
+            /<title>[\s\S]*?<\/title>/,
+            metaHtml.trim()
+        );
+    }
+
+    // صفحهٔ اختصاصی هر عمل — با متاتگ مخصوص خودش
+    app.get('/op/:slug', (req, res, next) => {
+        try {
+            const key = req.params.slug;
+            const operation = db.prepare(`
+                SELECT o.id, o.name, o.slug, o.status, o.published_at, o.updated_at,
+                       oc.description, u.full_name AS author_name
+                FROM operations o
+                LEFT JOIN operation_content oc ON oc.operation_id = o.id
+                LEFT JOIN users u ON o.author_id = u.id
+                WHERE (o.slug = ? OR o.id = ?) AND o.status = 'approved'
+            `).get(key, parseInt(key, 10) || -1);
+
+            if (!operation) {
+                return res.status(404).sendFile(path.join(__dirname, 'public', '404.html'));
+            }
+            res.send(renderPage(seo.operationMeta(operation, baseUrlOf(req))));
+        } catch (err) {
+            next(err);
+        }
+    });
+
     // مسیر API که پیدا نشد باید JSON برگرداند، نه صفحهٔ HTML.
     // قبلاً به app.get('*') می‌رسید و index.html را می‌فرستاد که کلاینت
     // را گیج می‌کرد (پاسخ HTML به‌جای خطای ۴۰۴).
@@ -117,7 +179,9 @@ async function main() {
         if (looksLikeFile) {
             return res.status(404).sendFile(path.join(__dirname, 'public', '404.html'));
         }
-        res.sendFile(path.join(__dirname, 'public', 'index.html'));
+        // متاتگ‌های پیش‌فرض تزریق می‌شوند تا صفحهٔ اصلی هم برای موتور
+        // جستجو و اشتراک‌گذاری عنوان و توضیح درست داشته باشد.
+        res.send(renderPage(seo.defaultMeta(baseUrlOf(req))));
     });
 
     // مدیریت خطای نهایی — پاسخ متناسب با نوع درخواست

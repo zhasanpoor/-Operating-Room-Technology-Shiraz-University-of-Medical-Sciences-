@@ -1276,6 +1276,114 @@ router.post('/notifications/read-all', authMiddleware, (req, res) => {
     }
 });
 
+// ── علاقه‌مندی و نشان کردن ──────────────────────────────────────────
+
+/** افزودن یا برداشتن علاقه‌مندی/نشان (toggle). */
+router.post('/operations/:id/:kind(favorite|bookmark)', authMiddleware, (req, res) => {
+    try {
+        const kind = req.params.kind;
+        const opId = parseInt(req.params.id, 10);
+
+        const operation = db.prepare('SELECT id FROM operations WHERE id = ?').get(opId);
+        if (!operation) return res.status(404).json({ error: 'این عمل جراحی پیدا نشد.' });
+
+        const existing = db.prepare(
+            'SELECT id FROM user_items WHERE user_id = ? AND operation_id = ? AND kind = ?'
+        ).get(req.user.id, opId, kind);
+
+        if (existing) {
+            db.prepare('DELETE FROM user_items WHERE id = ?').run(existing.id);
+            return res.json({
+                active: false,
+                message: kind === 'favorite' ? 'از علاقه‌مندی‌ها برداشته شد.' : 'نشان برداشته شد.'
+            });
+        }
+
+        db.prepare(
+            'INSERT INTO user_items (user_id, operation_id, kind) VALUES (?, ?, ?)'
+        ).run(req.user.id, opId, kind);
+
+        res.json({
+            active: true,
+            message: kind === 'favorite' ? 'به علاقه‌مندی‌ها اضافه شد ❤️' : 'نشان شد 🔖'
+        });
+    } catch (err) {
+        console.error('خطا در علاقه‌مندی:', err.message);
+        res.status(500).json({ error: 'انجام نشد. دوباره تلاش کنید.' });
+    }
+});
+
+/** فهرست علاقه‌مندی‌ها و نشان‌های خود کاربر. */
+router.get('/my-items', authMiddleware, (req, res) => {
+    try {
+        const kind = req.query.kind;
+        const params = [req.user.id];
+        let where = 'ui.user_id = ?';
+        if (kind === 'favorite' || kind === 'bookmark') {
+            where += ' AND ui.kind = ?';
+            params.push(kind);
+        }
+
+        const items = db.prepare(`
+            SELECT ui.kind, ui.created_at,
+                   o.id, o.name, o.op_number, o.slug,
+                   c.name_fa AS category_name, c.icon AS category_icon, c.color AS category_color
+            FROM user_items ui
+            JOIN operations o ON ui.operation_id = o.id
+            JOIN categories c ON o.category_id = c.id
+            WHERE ${where} AND o.status = 'approved'
+            ORDER BY ui.created_at DESC
+        `).all(...params);
+
+        res.json(items);
+    } catch (err) {
+        console.error('خطا در خواندن علاقه‌مندی‌ها:', err.message);
+        res.status(500).json({ error: 'خواندن فهرست ناموفق بود.' });
+    }
+});
+
+/** شناسه‌های علاقه‌مندی/نشان کاربر — برای رنگی کردن دکمه‌ها در فهرست. */
+router.get('/my-item-ids', authMiddleware, (req, res) => {
+    try {
+        const rows = db.prepare(
+            'SELECT operation_id, kind FROM user_items WHERE user_id = ?'
+        ).all(req.user.id);
+        res.json({
+            favorites: rows.filter(r => r.kind === 'favorite').map(r => r.operation_id),
+            bookmarks: rows.filter(r => r.kind === 'bookmark').map(r => r.operation_id)
+        });
+    } catch (err) {
+        res.json({ favorites: [], bookmarks: [] });
+    }
+});
+
+// ── اشتراک‌گذاری ────────────────────────────────────────────────────
+
+/** کانال‌های مجاز اشتراک‌گذاری — ورودی دلخواه پذیرفته نمی‌شود. */
+const SHARE_CHANNELS = ['telegram', 'whatsapp', 'eitaa', 'bale', 'rubika',
+                        'twitter', 'linkedin', 'email', 'copy', 'native'];
+
+/** ثبت یک اشتراک‌گذاری برای گزارش‌گیری. مهمان هم می‌تواند. */
+router.post('/operations/:id/share', optionalAuth, (req, res) => {
+    try {
+        const channel = String(req.body.channel || '').toLowerCase();
+        if (!SHARE_CHANNELS.includes(channel)) {
+            return res.status(400).json({ error: 'کانال اشتراک‌گذاری نامعتبر است.' });
+        }
+        const opId = parseInt(req.params.id, 10);
+        const operation = db.prepare('SELECT id FROM operations WHERE id = ?').get(opId);
+        if (!operation) return res.status(404).json({ error: 'این عمل جراحی پیدا نشد.' });
+
+        db.prepare('INSERT INTO shares (operation_id, user_id, channel) VALUES (?, ?, ?)')
+          .run(opId, req.user ? req.user.id : null, channel);
+
+        res.json({ ok: true });
+    } catch (err) {
+        // شکست ثبت آمار نباید تجربهٔ کاربر را خراب کند
+        res.json({ ok: false });
+    }
+});
+
 /**
  * جدول رتبه‌بندی نویسندگان بر اساس تعداد پست تأییدشده.
  * عمومی است (بدون احراز هویت) تا رقابت دیده شود، اما فقط نام و آمار

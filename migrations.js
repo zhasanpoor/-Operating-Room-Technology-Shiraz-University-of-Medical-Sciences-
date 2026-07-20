@@ -229,6 +229,162 @@ const migrations = [
             // نسخهٔ محلی فرق می‌کرد. این مهاجرت هر دو را یکسان می‌کند.
             db.exec(`UPDATE operations SET is_locked = 0 WHERE author_id IS NULL`);
         }
+    },
+
+    {
+        id: '010_engagement',
+        description: 'علاقه‌مندی، نشان کردن، و ثبت اشتراک‌گذاری',
+        up(db) {
+            db.exec(`
+                -- علاقه‌مندی و نشان در یک جدول با ستون kind نگه داشته می‌شوند
+                -- چون ساختارشان یکی است و کوئری‌ها ساده‌تر می‌مانند.
+                CREATE TABLE IF NOT EXISTS user_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    operation_id INTEGER NOT NULL,
+                    kind TEXT NOT NULL CHECK(kind IN ('favorite','bookmark')),
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY (operation_id) REFERENCES operations(id) ON DELETE CASCADE
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_user_items_unique
+                    ON user_items(user_id, operation_id, kind);
+                CREATE INDEX IF NOT EXISTS idx_user_items_op
+                    ON user_items(operation_id, kind);
+
+                CREATE TABLE IF NOT EXISTS shares (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    operation_id INTEGER NOT NULL,
+                    user_id INTEGER,                  -- مهمان هم می‌تواند اشتراک بگذارد
+                    channel TEXT NOT NULL,            -- telegram, whatsapp, copy, native, ...
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (operation_id) REFERENCES operations(id) ON DELETE CASCADE,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_shares_op ON shares(operation_id);
+                CREATE INDEX IF NOT EXISTS idx_shares_channel ON shares(channel, created_at);
+            `);
+        }
+    },
+
+    {
+        id: '011_profile_and_verification',
+        description: 'اطلاعات تکمیلی پروفایل و تأیید ایمیل',
+        up(db) {
+            addColumn(db, 'users', 'mobile', "TEXT DEFAULT ''");
+            addColumn(db, 'users', 'workplace', "TEXT DEFAULT ''");   // بیمارستان
+            addColumn(db, 'users', 'university', "TEXT DEFAULT ''");  // محل تحصیل
+            addColumn(db, 'users', 'field_of_study', "TEXT DEFAULT ''");
+            addColumn(db, 'users', 'study_level', "TEXT DEFAULT ''");
+            addColumn(db, 'users', 'email_verified', 'INTEGER DEFAULT 0');
+            addColumn(db, 'users', 'auth_provider', "TEXT DEFAULT 'local'"); // local | google
+
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS email_tokens (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    token_hash TEXT NOT NULL,   -- خود توکن ذخیره نمی‌شود، فقط هش آن
+                    purpose TEXT NOT NULL DEFAULT 'verify',
+                    expires_at DATETIME NOT NULL,
+                    used_at DATETIME,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_email_tokens_lookup
+                    ON email_tokens(token_hash, purpose);
+            `);
+
+            // کاربران فعلی (که با روش قدیمی ساخته شده‌اند) تأییدشده تلقی
+            // می‌شوند تا با فعال شدن این قابلیت از سایت بیرون نیفتند.
+            db.exec(`UPDATE users SET email_verified = 1`);
+        }
+    },
+
+    {
+        id: '012_analytics',
+        description: 'ثبت بازدید صفحات و رفتار کاربر برای گزارش‌های مدیریتی',
+        up(db) {
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS page_views (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    operation_id INTEGER,
+                    path TEXT NOT NULL,
+                    referrer TEXT DEFAULT '',
+                    device TEXT DEFAULT '',      -- mobile | tablet | desktop
+                    browser TEXT DEFAULT '',
+                    -- IP ذخیره نمی‌شود؛ فقط هش کوتاه برای شمارش بازدیدکنندهٔ یکتا
+                    visitor_hash TEXT DEFAULT '',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+                    FOREIGN KEY (operation_id) REFERENCES operations(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_views_created ON page_views(created_at);
+                CREATE INDEX IF NOT EXISTS idx_views_op ON page_views(operation_id);
+            `);
+        }
+    },
+
+    {
+        id: '013_site_settings',
+        description: 'تنظیمات و سیاست‌های سایت به‌صورت کلید-مقدار',
+        up(db) {
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS site_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT DEFAULT '',
+                    category TEXT DEFAULT 'general',
+                    updated_by INTEGER,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+
+            const defaults = [
+                ['site_name', 'تکنولوژی اتاق عمل', 'general'],
+                ['site_tagline', 'ویژه دانشجویان و متخصصین علوم پزشکی', 'general'],
+                ['contact_email', '', 'general'],
+                ['allow_signup', '1', 'policy'],
+                ['require_email_verification', '0', 'policy'],
+                ['auto_approve_posts', '0', 'policy'],
+                ['max_upload_mb', '8', 'limits'],
+                ['login_block_minutes', '15', 'limits']
+            ];
+            const stmt = db.prepare(
+                `INSERT OR IGNORE INTO site_settings (key, value, category) VALUES (?, ?, ?)`
+            );
+            for (const [k, v, c] of defaults) stmt.run(k, v, c);
+        }
+    },
+
+    {
+        id: '014_operation_slug',
+        description: 'آدرس خوانا (slug) برای هر عمل — لازم برای سئو',
+        up(db) {
+            addColumn(db, 'operations', 'slug', 'TEXT');
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_operations_slug ON operations(slug)`);
+        }
+    },
+
+    {
+        id: '015_backfill_slugs',
+        description: 'ساخت slug برای عمل‌های موجود',
+        up(db) {
+            const { uniqueSlug } = require('./lib/slug');
+            const rows = db.prepare(
+                'SELECT id, name, op_number, slug FROM operations ORDER BY id'
+            ).all();
+
+            const taken = new Set(rows.filter(r => r.slug).map(r => r.slug));
+            const update = db.prepare('UPDATE operations SET slug = ? WHERE id = ?');
+
+            let count = 0;
+            for (const row of rows) {
+                if (row.slug) continue;
+                update.run(uniqueSlug(row.name, row.op_number, taken), row.id);
+                count++;
+            }
+            if (count > 0) console.log(`     ${count} slug ساخته شد`);
+        }
     }
 ];
 

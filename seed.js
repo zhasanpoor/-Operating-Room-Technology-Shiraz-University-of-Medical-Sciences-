@@ -195,10 +195,28 @@ function seed() {
     // چون روی دیتابیس تازه (سرور) مهاجرت‌ها *قبل* از seed اجرا می‌شوند،
     // ستون status پیش‌فرض 'draft' می‌گیرد و بدون این تنظیم صریح، تمام
     // عمل‌ها پیش‌نویس و برای بازدیدکننده نامرئی می‌شدند.
+    // همین منطق برای slug هم لازم است: مهاجرت backfill روی جدول خالی اجرا
+    // می‌شود، پس اگر seed خودش slug نسازد، آدرس‌های خوانا خالی می‌مانند و
+    // سئو و اشتراک‌گذاری با شناسهٔ عددی کار می‌کند.
     const opColumns = db.prepare(`PRAGMA table_info(operations)`).all().map(c => c.name);
     const hasStatus = opColumns.includes('status');
+    const hasSlug = opColumns.includes('slug');
 
-    const insertOperation = hasStatus
+    const { uniqueSlug } = require('./lib/slug');
+    const takenSlugs = new Set(
+        hasSlug
+            ? db.prepare('SELECT slug FROM operations WHERE slug IS NOT NULL')
+                .all().map(r => r.slug)
+            : []
+    );
+
+    const insertOperation = (hasStatus && hasSlug)
+        ? db.prepare(`
+            INSERT OR IGNORE INTO operations
+                (category_id, op_number, name, sort_order, status, is_locked, published_at, slug)
+            VALUES (?, ?, ?, ?, 'approved', 0, CURRENT_TIMESTAMP, ?)
+        `)
+        : hasStatus
         ? db.prepare(`
             INSERT OR IGNORE INTO operations
                 (category_id, op_number, name, sort_order, status, is_locked, published_at)
@@ -247,7 +265,12 @@ function seed() {
 
             const ops = operationsData[cat.key] || [];
             for (const op of ops) {
-                insertOperation.run(category.id, op.op_number, op.name, op.sort_order);
+                if (hasStatus && hasSlug) {
+                    insertOperation.run(category.id, op.op_number, op.name, op.sort_order,
+                                        uniqueSlug(op.name, op.op_number, takenSlugs));
+                } else {
+                    insertOperation.run(category.id, op.op_number, op.name, op.sort_order);
+                }
                 const operation = db.prepare('SELECT id FROM operations WHERE op_number = ?').get(op.op_number);
                 insertContent.run(operation.id);
             }
