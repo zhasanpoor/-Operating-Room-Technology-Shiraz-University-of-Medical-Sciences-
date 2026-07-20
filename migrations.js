@@ -213,6 +213,22 @@ const migrations = [
             addColumn(db, 'uploaded_files', 'sha256', "TEXT DEFAULT ''");
             addColumn(db, 'uploaded_files', 'is_quarantined', 'INTEGER DEFAULT 0');
         }
+    },
+
+    {
+        id: '009_unlock_seeded_content',
+        description: 'باز کردن قفل محتوای seed شده تا مدیر بتواند ویرایشش کند',
+        up(db) {
+            // مهاجرت ۰۰۳ همهٔ عمل‌های موجود را قفل کرد. اشتباه بود:
+            // قفل شدن باید فقط وقتی رخ دهد که مدیر پست *یک نویسنده* را
+            // تأیید می‌کند. محتوای seed شده متعلق به خود مدیر است و اگر
+            // قفل بماند، مدیر دیگر نمی‌تواند هیچ‌کدام از ۱۴۳ عمل را ویرایش کند.
+            //
+            // ضمناً دیتابیس تازه (که Render با هر دیپلوی می‌سازد) این
+            // ردیف‌ها را قفل‌نشده می‌ساخت — یعنی رفتار سایت زنده با
+            // نسخهٔ محلی فرق می‌کرد. این مهاجرت هر دو را یکسان می‌کند.
+            db.exec(`UPDATE operations SET is_locked = 0 WHERE author_id IS NULL`);
+        }
     }
 ];
 

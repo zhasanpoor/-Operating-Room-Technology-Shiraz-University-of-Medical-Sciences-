@@ -8,7 +8,10 @@ const {
     sanitizeRichText, sanitizePlainText, detectThreats, worstSeverity, validateVideoUrl
 } = require('../lib/sanitize');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'shiraz-ort-secret-key-2024';
+// مقدار پیش‌فرض قبلی ('shiraz-ort-secret-key-2024') در همین مخزن عمومی
+// منتشر شده بود و هرکسی می‌توانست با آن توکن مدیر جعل کند.
+// config.js در production بدون secret قوی اجازهٔ بالا آمدن نمی‌دهد.
+const { JWT_SECRET, JWT_EXPIRES_IN, BCRYPT_ROUNDS } = require('../config');
 
 module.exports = function(db) {
 const router = express.Router();
@@ -50,18 +53,87 @@ function authMiddleware(req, res, next) {
     if (!token) return res.status(401).json({ error: 'احراز هویت لازم است' });
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
-        req.user = decoded;
+
+        // نقش و وضعیت از دیتابیس خوانده می‌شود، نه از توکن.
+        // اگر ادمین سطح دسترسی کسی را پایین بیاورد یا حسابش را ببندد،
+        // توکن قبلی‌اش نباید همچنان دسترسی بالا بدهد.
+        const fresh = db.prepare(
+            'SELECT id, username, full_name, role, is_active FROM users WHERE id = ?'
+        ).get(decoded.id);
+
+        if (!fresh) return res.status(401).json({ error: 'حساب کاربری یافت نشد' });
+        if (fresh.is_active === 0) {
+            return res.status(403).json({
+                error: 'حساب شما غیرفعال شده است. با مدیر سایت تماس بگیرید.'
+            });
+        }
+
+        req.user = fresh;
         next();
     } catch (err) {
         return res.status(401).json({ error: 'توکن نامعتبر' });
     }
 }
 
-function adminOnly(req, res, next) {
-    if (req.user.role !== 'admin' && req.user.role !== 'editor') {
-        return res.status(403).json({ error: 'دسترسی غیرمجاز' });
+/**
+ * فقط مدیر.
+ *
+ * پیش از این `adminOnly` نقش `editor` را هم می‌پذیرفت و روی مسیر ساخت
+ * کاربر نشسته بود — یعنی یک نویسنده می‌توانست برای خودش حساب ادمین
+ * بسازد و کاربران را حذف کند. ارتقای کامل سطح دسترسی.
+ */
+function requireAdmin(req, res, next) {
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'این بخش فقط برای مدیر سایت است.' });
     }
     next();
+}
+
+/** مدیر یا نویسنده — برای کارهای محتوایی. */
+function requireAuthor(req, res, next) {
+    if (req.user.role !== 'admin' && req.user.role !== 'editor') {
+        return res.status(403).json({ error: 'برای این کار باید نویسنده باشید.' });
+    }
+    next();
+}
+
+/**
+ * بررسی اجازهٔ ویرایش یک عمل.
+ *
+ * قواعد:
+ *   • نویسنده فقط پست‌های خودش را می‌بیند و ویرایش می‌کند.
+ *   • پست تأییدشده قفل است و هیچ‌کس ویرایشش نمی‌کند — حتی نویسنده.
+ *     مدیر برای اصلاح باید اول عمداً قفل را باز کند.
+ *
+ * @returns {{ok:true, operation:object}|{ok:false, status:number, error:string}}
+ */
+function checkOperationAccess(db, user, operationId) {
+    const operation = db.prepare(
+        'SELECT id, author_id, status, is_locked FROM operations WHERE id = ?'
+    ).get(operationId);
+
+    if (!operation) {
+        return { ok: false, status: 404, error: 'این عمل جراحی پیدا نشد.' };
+    }
+
+    const isAdmin = user.role === 'admin';
+    const isOwner = operation.author_id === user.id;
+
+    if (!isAdmin && !isOwner) {
+        return { ok: false, status: 403, error: 'شما فقط به پست‌های خودتان دسترسی دارید.' };
+    }
+
+    if (operation.is_locked === 1) {
+        return {
+            ok: false,
+            status: 423,
+            error: isAdmin
+                ? 'این پست تأیید و قفل شده. برای ویرایش، اول قفلش را باز کنید.'
+                : 'این پست تأیید شده و دیگر قابل ویرایش نیست.'
+        };
+    }
+
+    return { ok: true, operation };
 }
 
 // Auth
@@ -82,7 +154,7 @@ router.post('/auth/login', async (req, res) => {
         const token = jwt.sign(
             { id: user.id, username: user.username, role: user.role, full_name: user.full_name },
             JWT_SECRET,
-            { expiresIn: '7d' }
+            { expiresIn: JWT_EXPIRES_IN }
         );
         res.json({
             token,
@@ -93,7 +165,7 @@ router.post('/auth/login', async (req, res) => {
     }
 });
 
-router.post('/auth/register', authMiddleware, adminOnly, async (req, res) => {
+router.post('/auth/register', authMiddleware, requireAdmin, async (req, res) => {
     try {
         const { username, password, full_name, role } = req.body;
         if (!username || !password || !full_name) {
@@ -103,7 +175,7 @@ router.post('/auth/register', authMiddleware, adminOnly, async (req, res) => {
         if (existing) {
             return res.status(400).json({ error: 'نام کاربری تکراری است' });
         }
-        const hashedPassword = await bcrypt.hash(password, 10);
+        const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
         const result = db.prepare(`
             INSERT INTO users (username, password, full_name, role) VALUES (?, ?, ?, ?)
         `).run(username, hashedPassword, full_name, role || 'user');
@@ -118,12 +190,12 @@ router.get('/auth/me', authMiddleware, (req, res) => {
     res.json(user);
 });
 
-router.get('/auth/users', authMiddleware, adminOnly, (req, res) => {
+router.get('/auth/users', authMiddleware, requireAdmin, (req, res) => {
     const users = db.prepare('SELECT id, username, full_name, role, created_at FROM users ORDER BY id').all();
     res.json(users);
 });
 
-router.delete('/auth/users/:id', authMiddleware, adminOnly, (req, res) => {
+router.delete('/auth/users/:id', authMiddleware, requireAdmin, (req, res) => {
     if (parseInt(req.params.id) === req.user.id) {
         return res.status(400).json({ error: 'نمی‌توانید خودتان را حذف کنید' });
     }
@@ -168,7 +240,7 @@ router.get('/categories/:key', (req, res) => {
     }
 });
 
-router.put('/categories/:id', authMiddleware, adminOnly, (req, res) => {
+router.put('/categories/:id', authMiddleware, requireAdmin, (req, res) => {
     try {
         const { name_fa, name_en, icon, color, sort_order } = req.body;
         db.prepare(`
@@ -182,7 +254,7 @@ router.put('/categories/:id', authMiddleware, adminOnly, (req, res) => {
     }
 });
 
-router.delete('/categories/:id', authMiddleware, adminOnly, (req, res) => {
+router.delete('/categories/:id', authMiddleware, requireAdmin, (req, res) => {
     try {
         db.prepare('DELETE FROM categories WHERE id = ?').run(req.params.id);
         res.json({ message: 'دسته‌بندی حذف شد' });
@@ -250,12 +322,26 @@ router.get('/operations/:id', (req, res) => {
     }
 });
 
-router.post('/operations', authMiddleware, adminOnly, (req, res) => {
+router.post('/operations', authMiddleware, requireAuthor, (req, res) => {
     try {
         const { category_id, op_number, name, sort_order } = req.body;
+        if (!category_id || !name) {
+            return res.status(400).json({ error: 'دسته‌بندی و نام عمل الزامی است.' });
+        }
+
+        // پست جدید به نام سازنده‌اش ثبت می‌شود.
+        // مدیر مستقیم منتشر می‌کند؛ نویسنده پیش‌نویس می‌سازد که باید
+        // بعداً برای تأیید بفرستد.
+        const isAdmin = req.user.role === 'admin';
+        const status = isAdmin ? 'approved' : 'draft';
+
         const result = db.prepare(`
-            INSERT INTO operations (category_id, op_number, name, sort_order) VALUES (?, ?, ?, ?)
-        `).run(category_id, op_number, name, sort_order || 0);
+            INSERT INTO operations (category_id, op_number, name, sort_order,
+                                    author_id, status, is_locked, published_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(category_id, sanitizePlainText(op_number), sanitizePlainText(name),
+               sort_order || 0, req.user.id, status, 0,
+               isAdmin ? new Date().toISOString() : null);
 
         db.prepare(`INSERT INTO operation_content (operation_id) VALUES (?)`).run(result.lastInsertRowid);
 
@@ -265,20 +351,29 @@ router.post('/operations', authMiddleware, adminOnly, (req, res) => {
     }
 });
 
-router.put('/operations/:id', authMiddleware, adminOnly, (req, res) => {
+router.put('/operations/:id', authMiddleware, requireAuthor, (req, res) => {
     try {
+        const access = checkOperationAccess(db, req.user, req.params.id);
+        if (!access.ok) {
+            return res.status(access.status).json({ error: access.error });
+        }
+
         const { op_number, name, sort_order } = req.body;
         db.prepare(`
             UPDATE operations SET op_number = COALESCE(?, op_number), name = COALESCE(?, name),
-            sort_order = COALESCE(?, sort_order) WHERE id = ?
-        `).run(op_number, name, sort_order, req.params.id);
+            sort_order = COALESCE(?, sort_order), updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        `).run(
+            op_number === undefined ? null : sanitizePlainText(op_number),
+            name === undefined ? null : sanitizePlainText(name),
+            nz(sort_order), req.params.id
+        );
         res.json({ message: 'عمل بروزرسانی شد' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-router.delete('/operations/:id', authMiddleware, adminOnly, (req, res) => {
+router.delete('/operations/:id', authMiddleware, requireAdmin, (req, res) => {
     try {
         db.prepare('DELETE FROM operations WHERE id = ?').run(req.params.id);
         res.json({ message: 'عمل حذف شد' });
@@ -287,14 +382,174 @@ router.delete('/operations/:id', authMiddleware, adminOnly, (req, res) => {
     }
 });
 
+// ── گردش کار بررسی و تأیید ─────────────────────────────────────────
+
+/**
+ * ارسال پست برای بررسی — توسط نویسنده.
+ * پیش‌نویس یا «نیازمند اصلاح» → «در انتظار تأیید».
+ */
+router.post('/operations/:id/submit', authMiddleware, requireAuthor, (req, res) => {
+    try {
+        const operation = db.prepare(
+            'SELECT id, author_id, status, is_locked, name FROM operations WHERE id = ?'
+        ).get(req.params.id);
+
+        if (!operation) return res.status(404).json({ error: 'این عمل جراحی پیدا نشد.' });
+        if (req.user.role !== 'admin' && operation.author_id !== req.user.id) {
+            return res.status(403).json({ error: 'شما فقط پست‌های خودتان را می‌توانید بفرستید.' });
+        }
+        if (operation.is_locked === 1) {
+            return res.status(423).json({ error: 'این پست قبلاً تأیید شده است.' });
+        }
+        if (operation.status === 'pending') {
+            return res.status(400).json({ error: 'این پست همین الان هم در صف بررسی است.' });
+        }
+
+        db.prepare(`UPDATE operations SET status = 'pending',
+                    submitted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?`).run(req.params.id);
+
+        res.json({ message: 'پستت رفت توی صف بررسی! نتیجه رو بهت خبر می‌دیم. 🎉' });
+    } catch (err) {
+        console.error('خطا در ارسال برای بررسی:', err.message);
+        res.status(500).json({ error: 'ارسال انجام نشد. دوباره تلاش کن.' });
+    }
+});
+
+/**
+ * تصمیم مدیر روی پست: تأیید / رد / درخواست اصلاح.
+ * تأیید ⇒ انتشار + قفل شدن برای همیشه (حتی برای نویسنده).
+ */
+router.post('/operations/:id/review', authMiddleware, requireAdmin, (req, res) => {
+    try {
+        const { decision, comment } = req.body;
+
+        const valid = { approve: 'approved', reject: 'rejected', changes: 'changes_requested' };
+        if (!valid[decision]) {
+            return res.status(400).json({
+                error: 'تصمیم باید یکی از این‌ها باشد: approve، reject، changes'
+            });
+        }
+
+        const operation = db.prepare(
+            'SELECT id, author_id, status, name FROM operations WHERE id = ?'
+        ).get(req.params.id);
+        if (!operation) return res.status(404).json({ error: 'این عمل جراحی پیدا نشد.' });
+
+        const newStatus = valid[decision];
+        const isApprove = decision === 'approve';
+
+        db.prepare(`UPDATE operations SET
+                        status = ?,
+                        is_locked = ?,
+                        reviewed_by = ?,
+                        reviewed_at = CURRENT_TIMESTAMP,
+                        published_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE published_at END,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?`)
+          .run(newStatus, isApprove ? 1 : 0, req.user.id, isApprove ? 1 : 0, req.params.id);
+
+        // کامنت بررسی (اختیاری) — گفتگوی ادمین و نویسنده روی پست
+        if (comment && String(comment).trim()) {
+            db.prepare(`INSERT INTO post_comments (operation_id, user_id, body, kind)
+                        VALUES (?, ?, ?, 'review')`)
+              .run(req.params.id, req.user.id, sanitizePlainText(comment).slice(0, 2000));
+        }
+
+        // اعلان برای نویسنده
+        if (operation.author_id) {
+            const messages = {
+                approved: { title: 'پستت تأیید شد! 🎉',
+                            body: `«${operation.name}» منتشر شد. دمت گرم!`, icon: '✅' },
+                rejected: { title: 'پستت رد شد 😔',
+                            body: `«${operation.name}» تأیید نشد. نظر مدیر رو ببین.`, icon: '❌' },
+                changes_requested: { title: 'پستت اصلاح می‌خواد ✏️',
+                            body: `«${operation.name}» چند تا تغییر لازم داره. نظر مدیر رو ببین.`, icon: '📝' }
+            };
+            const msg = messages[newStatus];
+            db.prepare(`INSERT INTO notifications (user_id, title, body, icon, link)
+                        VALUES (?, ?, ?, ?, ?)`)
+              .run(operation.author_id, msg.title, msg.body, msg.icon,
+                   '/dashboard/posts/' + operation.id);
+        }
+
+        // ثبت در لاگ ممیزی
+        db.prepare(`INSERT INTO audit_log (user_id, action, target_type, target_id, detail, ip)
+                    VALUES (?, ?, 'operation', ?, ?, ?)`)
+          .run(req.user.id, 'review_' + decision, req.params.id,
+               `«${operation.name}» → ${newStatus}`, req.ip || '');
+
+        const doneMessages = {
+            approved: 'پست تأیید و منتشر شد. از این به بعد قفل است.',
+            rejected: 'پست رد شد و به نویسنده خبر داده شد.',
+            changes_requested: 'درخواست اصلاح ثبت شد و به نویسنده خبر داده شد.'
+        };
+        res.json({ message: doneMessages[newStatus] });
+    } catch (err) {
+        console.error('خطا در بررسی پست:', err.message);
+        res.status(500).json({ error: 'ثبت تصمیم انجام نشد. دوباره تلاش کنید.' });
+    }
+});
+
+/**
+ * باز کردن قفل پست تأییدشده — فقط مدیر، برای اصلاح‌های ضروری.
+ * پست از حالت انتشار خارج نمی‌شود؛ فقط دوباره قابل ویرایش می‌شود.
+ */
+router.post('/operations/:id/unlock', authMiddleware, requireAdmin, (req, res) => {
+    try {
+        const operation = db.prepare(
+            'SELECT id, name, is_locked FROM operations WHERE id = ?'
+        ).get(req.params.id);
+        if (!operation) return res.status(404).json({ error: 'این عمل جراحی پیدا نشد.' });
+        if (operation.is_locked !== 1) {
+            return res.status(400).json({ error: 'این پست قفل نیست.' });
+        }
+
+        db.prepare(`UPDATE operations SET is_locked = 0, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?`).run(req.params.id);
+
+        db.prepare(`INSERT INTO audit_log (user_id, action, target_type, target_id, detail, ip)
+                    VALUES (?, 'unlock', 'operation', ?, ?, ?)`)
+          .run(req.user.id, req.params.id, `باز کردن قفل «${operation.name}»`, req.ip || '');
+
+        res.json({ message: 'قفل باز شد. یادتان باشد بعد از اصلاح دوباره تأییدش کنید.' });
+    } catch (err) {
+        console.error('خطا در باز کردن قفل:', err.message);
+        res.status(500).json({ error: 'باز کردن قفل انجام نشد.' });
+    }
+});
+
+/** صف انتظار تأیید — برای پنل مدیر. */
+router.get('/review-queue', authMiddleware, requireAdmin, (req, res) => {
+    try {
+        const queue = db.prepare(`
+            SELECT o.id, o.name, o.op_number, o.status, o.submitted_at,
+                   c.name_fa AS category_name, c.icon AS category_icon,
+                   u.full_name AS author_name, u.username AS author_username
+            FROM operations o
+            JOIN categories c ON o.category_id = c.id
+            LEFT JOIN users u ON o.author_id = u.id
+            WHERE o.status = 'pending'
+            ORDER BY o.submitted_at ASC
+        `).all();
+        res.json(queue);
+    } catch (err) {
+        res.status(500).json({ error: 'خواندن صف بررسی ناموفق بود.' });
+    }
+});
+
 // Content
-router.put('/operations/:id/content', authMiddleware, adminOnly, (req, res) => {
+router.put('/operations/:id/content', authMiddleware, requireAuthor, (req, res) => {
     try {
         let { description, instruments, video_url_1, video_url_2, video_title_1, video_title_2,
               slides_url, slides_title, description_images, instruments_images } = req.body;
 
-        const operation = db.prepare('SELECT id FROM operations WHERE id = ?').get(req.params.id);
-        if (!operation) return res.status(404).json({ error: 'عمل یافت نشد' });
+        // مالکیت و قفل بودن پست بررسی می‌شود: نویسنده فقط پست خودش،
+        // و پست تأییدشده برای هیچ‌کس قابل ویرایش نیست.
+        const access = checkOperationAccess(db, req.user, req.params.id);
+        if (!access.ok) {
+            return res.status(access.status).json({ error: access.error });
+        }
 
         // ── پاک‌سازی و اعتبارسنجی ورودی ─────────────────────────────
         // محتوای ویرایشگر HTML است و بدون پاک‌سازی یک مسیر مستقیم XSS
@@ -419,7 +674,7 @@ router.get('/files', authMiddleware, (req, res) => {
     res.json(files);
 });
 
-router.delete('/files/:id', authMiddleware, adminOnly, (req, res) => {
+router.delete('/files/:id', authMiddleware, requireAdmin, (req, res) => {
     try {
         const file = db.prepare('SELECT stored_name FROM uploaded_files WHERE id = ?').get(req.params.id);
         if (file) {
