@@ -63,8 +63,15 @@
                     مدیریت محتوا
                     <span class="nav-badge" id="contentBadge">0</span>
                 </a>
+                <a href="#" class="nav-item admin-only" data-page="review">
+                    <span class="nav-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+                    </span>
+                    صف بررسی
+                    <span class="nav-badge nav-badge-alert hidden" id="reviewBadge">0</span>
+                </a>
                 <div class="nav-divider"></div>
-                <a href="#" class="nav-item" data-page="users">
+                <a href="#" class="nav-item admin-only" data-page="users">
                     <span class="nav-icon">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
                     </span>
@@ -118,19 +125,33 @@
                 <!-- Dashboard -->
                 <div class="page active" id="page-dashboard">
                     <div class="page-title-row">
-                        <h2>داشبورد</h2>
-                        <p class="page-desc">نمای کلی سیستم مدیریت محتوا</p>
+                        <h2 id="dashGreeting">داشبورد</h2>
+                        <p class="page-desc" id="dashSubtitle">نمای کلی سیستم</p>
                     </div>
                     <div class="stats-grid" id="dashStats"></div>
-                    <div class="dashboard-cards">
-                        <div class="dash-card">
+                    <div class="dashboard-cards" id="dashCardsRow">
+                        <div class="dash-card" id="dashChartCard">
                             <div class="dash-card-header">
-                                <h3>دسته‌بندی‌ها</h3>
-                                <a href="#" class="link-btn" data-page="content">مشاهده همه →</a>
+                                <h3>پراکندگی عمل‌ها بر اساس دسته</h3>
                             </div>
-                            <div class="dash-card-body" id="dashCategories"></div>
+                            <div class="dash-card-body" id="dashChart"></div>
+                        </div>
+                        <div class="dash-card" id="dashActivityCard">
+                            <div class="dash-card-header">
+                                <h3>فعالیت‌های اخیر</h3>
+                            </div>
+                            <div class="dash-card-body" id="dashActivity"></div>
                         </div>
                     </div>
+                </div>
+
+                <!-- Review Queue -->
+                <div class="page" id="page-review">
+                    <div class="page-title-row">
+                        <h2>صف بررسی پست‌ها</h2>
+                        <p class="page-desc">پست‌هایی که نویسنده‌ها برای تأیید فرستاده‌اند</p>
+                    </div>
+                    <div id="reviewQueueList"></div>
                 </div>
 
                 <!-- Content Management -->
@@ -330,6 +351,18 @@
     </div>
 
     <!-- Modals -->
+    <div class="modal-overlay hidden" id="reviewPreviewModal">
+        <div class="modal modal-lg">
+            <div class="modal-header">
+                <h3 id="reviewPreviewTitle">مشاهدهٔ محتوا</h3>
+                <button class="modal-close" onclick="closeModal('reviewPreviewModal')">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+            <div class="modal-body" id="reviewPreviewBody"></div>
+        </div>
+    </div>
+
     <div class="modal-overlay hidden" id="addUserModal">
         <div class="modal modal-md">
             <div class="modal-header">
@@ -408,6 +441,7 @@
     <div class="toast-container" id="toastContainer"></div>
 
     <script src="/vendor/quill/quill.js"></script>
+    <script src="/js/jalali.js"></script>
     <script src="/js/editor.js"></script>
     <script src="/js/admin.js"></script>
 </body>

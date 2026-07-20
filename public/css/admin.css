@@ -476,3 +476,87 @@ body{font-family:'Vazirmatn',system-ui,sans-serif;background:var(--bg);color:var
 
 /* راهنمای بالای ویرایشگر */
 .editor-hint{font-size:12px;color:var(--text-3)}
+
+/* ═══════════════════════════════════════════════════════════════
+   داشبورد بازطراحی‌شده، صف بررسی، سطح‌بندی نویسنده
+   ═══════════════════════════════════════════════════════════════ */
+
+/* کارت‌های آمار با آیکون */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{display:flex;align-items:center;gap:14px;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius);padding:18px;transition:var(--transition)}
+.stat-card:hover{border-color:var(--border-2);transform:translateY(-2px)}
+.stat-card.stat-alert{border-color:var(--red-border);background:linear-gradient(135deg,var(--bg-3),var(--red-bg))}
+.stat-ico{width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0}
+.stat-body{min-width:0}
+.stat-card-value{font-size:28px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+.stat-card-label{font-size:13px;color:var(--text-3);margin-top:4px}
+
+/* چیدمان کارت‌های داشبورد */
+.dashboard-cards{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+@media(max-width:900px){.dashboard-cards{grid-template-columns:1fr}}
+.dash-card{background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.dash-card-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.dash-card-header h3{font-size:15px;font-weight:700}
+.dash-card-body{padding:20px}
+
+/* نمودار میله‌ای افقی */
+.bar-row{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.bar-row:last-child{margin-bottom:0}
+.bar-label{width:110px;font-size:13px;color:var(--text-2);flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar-track{flex:1;height:10px;background:var(--bg);border-radius:6px;overflow:hidden}
+.bar-fill{height:100%;border-radius:6px;transition:width .9s cubic-bezier(.4,0,.2,1)}
+.bar-value{width:36px;text-align:left;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text-2)}
+
+/* فعالیت‌های اخیر */
+.activity-row{display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)}
+.activity-row:last-child{border-bottom:none}
+.activity-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);margin-top:6px;flex-shrink:0}
+.activity-text{flex:1;min-width:0}
+.activity-action{font-size:13px;font-weight:600;display:block}
+.activity-detail{font-size:12px;color:var(--text-3);display:block;margin-top:2px}
+.activity-time{font-size:11px;color:var(--text-3);white-space:nowrap;flex-shrink:0}
+
+/* سطح‌بندی نویسنده */
+.level-badge{display:flex;align-items:center;gap:16px;padding:18px;border-radius:var(--radius);border:1px solid}
+.level-icon{font-size:44px;line-height:1}
+.level-name{font-size:20px;font-weight:800}
+.level-next{font-size:13px;color:var(--text-3);margin-top:4px}
+.encourage{margin-top:16px;padding:14px;background:var(--accent-bg);border-radius:var(--radius-xs);font-size:14px;color:var(--text-2);text-align:center}
+
+/* صف بررسی */
+.review-card{background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:14px;transition:var(--transition)}
+.review-card:hover{border-color:var(--border-2)}
+.review-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px}
+.review-title{font-size:16px;font-weight:700}
+.review-badge-pending{background:#f59e0b1a;color:#f59e0b;font-size:12px;padding:4px 12px;border-radius:20px;white-space:nowrap}
+.review-meta{display:flex;flex-wrap:wrap;gap:16px;font-size:13px;color:var(--text-3);margin-bottom:16px}
+.review-actions{display:flex;flex-wrap:wrap;gap:8px}
+.review-actions .btn{font-size:13px;padding:8px 14px}
+.btn-view{background:var(--bg-4)}
+.btn-approve{background:#10b9811a;color:#10b981;border-color:#10b98155}
+.btn-approve:hover{background:#10b98133}
+.btn-changes{background:#f59e0b1a;color:#f59e0b;border-color:#f59e0b55}
+.btn-changes:hover{background:#f59e0b33}
+.btn-reject{background:#ef44441a;color:#ef4444;border-color:#ef444455}
+.btn-reject:hover{background:#ef444433}
+
+/* badge هشدار روی منو */
+.nav-badge-alert{background:var(--red)!important;color:#fff!important}
+
+/* پیش‌نمایش محتوا در مودال */
+.modal-lg{max-width:800px;width:92vw}
+.preview-section{margin-bottom:24px}
+.preview-section h4{font-size:14px;color:var(--text-3);margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.preview-content{line-height:2}
+.preview-content img{max-width:100%;border-radius:var(--radius-xs);margin:10px 0}
+.preview-content h2{font-size:20px;font-weight:800;margin:14px 0 8px}
+.preview-content h3{font-size:17px;font-weight:700;margin:12px 0 6px}
+.preview-content ul,.preview-content ol{padding-right:24px;margin-bottom:10px}
+.preview-content blockquote{border-right:3px solid var(--accent);background:var(--accent-bg);padding:10px 14px;margin:10px 0;border-radius:var(--radius-xs)}
+
+/* حالت‌های خالی و بارگذاری */
+.empty-box{text-align:center;padding:60px 20px}
+.empty-emoji{font-size:56px;margin-bottom:12px}
+.empty-box h3{font-size:18px;margin-bottom:6px}
+.loading-row{display:flex;justify-content:center;padding:40px}
+.muted{color:var(--text-3)}

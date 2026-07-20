@@ -9,7 +9,7 @@ let descEditor=null;
 let instrEditor=null;
 
 async function api(url,options={}){const headers={'Content-Type':'application/json',...options.headers};if(token)headers['Authorization']=`Bearer ${token}`;const res=await fetch(API+url,{...options,headers});if(res.status===401){logout();throw new Error('Unauthorized')}return res.json()}
-function showPage(page){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.getElementById(`page-${page}`)?.classList.add('active');document.querySelectorAll('.nav-item[data-page]').forEach(n=>n.classList.remove('active'));document.querySelector(`[data-page="${page}"]`)?.classList.add('active');document.getElementById('breadcrumb').textContent={dashboard:'داشبورد',content:'مدیریت محتوا',users:'مدیریت کاربران',files:'مدیریت فایل‌ها'}[page]||page;closeSidebar()}
+function showPage(page){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.getElementById(`page-${page}`)?.classList.add('active');document.querySelectorAll('.nav-item[data-page]').forEach(n=>n.classList.remove('active'));document.querySelector(`[data-page="${page}"]`)?.classList.add('active');document.getElementById('breadcrumb').textContent={dashboard:'داشبورد',content:'مدیریت محتوا',review:'صف بررسی',users:'مدیریت کاربران',files:'مدیریت فایل‌ها'}[page]||page;closeSidebar()}
 function closeModal(id){document.getElementById(id)?.classList.add('hidden')}
 function openModal(id){document.getElementById(id)?.classList.remove('hidden')}
 function closeSidebar(){document.getElementById('sidebar')?.classList.remove('open');document.getElementById('sidebarOverlay')?.classList.remove('active')}
@@ -21,17 +21,195 @@ async function login(username,password){const res=await fetch(`${API}/auth/login
 function logout(){token=null;currentUser=null;localStorage.removeItem('admin_token');document.getElementById('loginPage').classList.remove('hidden');document.getElementById('adminLayout').classList.add('hidden')}
 async function checkAuth(){if(!token)return false;try{currentUser=await api('/auth/me');return true}catch{return false}}
 
-// Dashboard
+// ── ابزارهای کوچک ──────────────────────────────────────────────────
+const fa=n=>Number(n||0).toLocaleString('fa-IR');
+function esc(s){const d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML}
+// یک عدد را با انیمیشن از صفر تا مقدار نهایی بالا می‌برد
+function animateCount(el,target){
+  target=Number(target)||0;const dur=700,start=performance.now();
+  function tick(now){const p=Math.min((now-start)/dur,1);const eased=1-Math.pow(1-p,3);
+    el.textContent=fa(Math.round(eased*target));if(p<1)requestAnimationFrame(tick)}
+  requestAnimationFrame(tick);
+}
+const STATUS_FA={draft:'پیش‌نویس',pending:'در انتظار تأیید',approved:'تأییدشده',rejected:'ردشده',changes_requested:'نیازمند اصلاح'};
+const ACTION_FA={review_approve:'تأیید پست',review_reject:'رد پست',review_changes:'درخواست اصلاح',unlock:'باز کردن قفل'};
+
+// ── داشبورد ────────────────────────────────────────────────────────
 async function loadDashboard(){
-  const stats=await api('/stats');
-  document.getElementById('dashStats').innerHTML=`
-    <div class="stat-card"><div class="stat-card-value">${stats.total_categories}</div><div class="stat-card-label">دسته‌بندی</div></div>
-    <div class="stat-card"><div class="stat-card-value">${stats.total_operations}</div><div class="stat-card-label">عمل جراحی</div></div>
-    <div class="stat-card"><div class="stat-card-value">${stats.content_count}</div><div class="stat-card-label">محتوای آماده</div></div>
-    <div class="stat-card"><div class="stat-card-value">${stats.total_users}</div><div class="stat-card-label">کاربران</div></div>`;
-  document.getElementById('contentBadge').textContent=stats.total_operations;
-  const cats=await api('/categories');
-  document.getElementById('dashCategories').innerHTML=cats.map(c=>`<div class="dash-cat-chip" style="border-color:${c.color}33;background:${c.color}0d">${c.icon} ${c.name_fa} <span style="opacity:.5">(${c.operation_count})</span></div>`).join('');
+  const data=await api('/dashboard-stats');
+  if(data.role==='admin')renderAdminDashboard(data);
+  else renderAuthorDashboard(data);
+  refreshReviewBadge();
+}
+
+function renderAdminDashboard(data){
+  const s=data.stats;
+  document.getElementById('dashGreeting').textContent=`سلام ${currentUser?.full_name||'مدیر'} 👋`;
+  document.getElementById('dashSubtitle').textContent='نمای کلی سیستم مدیریت محتوا';
+
+  const cards=[
+    {v:s.operations,l:'عمل جراحی',icon:'🏥',c:'#3b82f6'},
+    {v:s.with_content,l:'محتوای آماده',icon:'📝',c:'#10b981'},
+    {v:s.users,l:'کاربر',icon:'👥',c:'#8b5cf6'},
+    {v:s.authors,l:'نویسنده',icon:'✍️',c:'#f59e0b'},
+    {v:s.pending,l:'در انتظار بررسی',icon:'⏳',c:'#ef4444',alert:s.pending>0,page:'review'},
+    {v:s.open_security_events,l:'هشدار امنیتی',icon:'🛡️',c:'#f43f5e',alert:s.open_security_events>0}
+  ];
+  document.getElementById('dashStats').innerHTML=cards.map((c,i)=>`
+    <div class="stat-card ${c.alert?'stat-alert':''}" ${c.page?`data-goto="${c.page}" style="cursor:pointer"`:''}>
+      <div class="stat-ico" style="background:${c.c}1a;color:${c.c}">${c.icon}</div>
+      <div class="stat-body">
+        <div class="stat-card-value" data-count="${c.v}">۰</div>
+        <div class="stat-card-label">${c.l}</div>
+      </div>
+    </div>`).join('');
+  document.querySelectorAll('#dashStats [data-count]').forEach(el=>animateCount(el,el.dataset.count));
+  document.querySelectorAll('#dashStats [data-goto]').forEach(el=>el.addEventListener('click',()=>{showPage(el.dataset.goto);loadReviewQueue()}));
+  document.getElementById('contentBadge').textContent=fa(s.operations);
+
+  // نمودار میله‌ای افقی پراکندگی دسته‌ها
+  const max=Math.max(1,...data.perCategory.map(c=>c.count));
+  document.getElementById('dashChart').innerHTML=data.perCategory.map(c=>`
+    <div class="bar-row">
+      <div class="bar-label">${c.icon} ${esc(c.name)}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:0;background:${c.color}" data-w="${(c.count/max*100).toFixed(1)}"></div></div>
+      <div class="bar-value">${fa(c.count)}</div>
+    </div>`).join('');
+  requestAnimationFrame(()=>document.querySelectorAll('#dashChart .bar-fill').forEach(b=>b.style.width=b.dataset.w+'%'));
+
+  // فعالیت‌های اخیر
+  const act=data.recent||[];
+  document.getElementById('dashActivity').innerHTML=act.length?act.map(a=>`
+    <div class="activity-row">
+      <div class="activity-dot"></div>
+      <div class="activity-text">
+        <span class="activity-action">${ACTION_FA[a.action]||esc(a.action)}</span>
+        <span class="activity-detail">${esc(a.detail||'')}</span>
+      </div>
+      <div class="activity-time">${Jalali.relative(a.created_at)}</div>
+    </div>`).join(''):'<p class="muted">هنوز فعالیتی ثبت نشده.</p>';
+}
+
+function renderAuthorDashboard(data){
+  const s=data.stats;
+  document.getElementById('dashGreeting').textContent=`سلام ${currentUser?.full_name||''} 👋`;
+  document.getElementById('dashSubtitle').textContent='داشبورد نویسنده — گزارش فعالیت شما';
+  const cards=[
+    {v:s.total,l:'کل پست‌ها',icon:'📚',c:'#3b82f6'},
+    {v:s.approved,l:'تأییدشده',icon:'✅',c:'#10b981'},
+    {v:s.pending,l:'در انتظار',icon:'⏳',c:'#f59e0b'},
+    {v:s.needs_changes,l:'نیازمند اصلاح',icon:'✏️',c:'#ef4444',alert:s.needs_changes>0},
+    {v:s.drafts,l:'پیش‌نویس',icon:'📄',c:'#6b7280'},
+    {v:s.views,l:'بازدید',icon:'👁️',c:'#8b5cf6'}
+  ];
+  document.getElementById('dashStats').innerHTML=cards.map(c=>`
+    <div class="stat-card ${c.alert?'stat-alert':''}">
+      <div class="stat-ico" style="background:${c.c}1a;color:${c.c}">${c.icon}</div>
+      <div class="stat-body">
+        <div class="stat-card-value" data-count="${c.v}">۰</div>
+        <div class="stat-card-label">${c.l}</div>
+      </div>
+    </div>`).join('');
+  document.querySelectorAll('#dashStats [data-count]').forEach(el=>animateCount(el,el.dataset.count));
+
+  // پیام تشویقی
+  renderEncouragement(s);
+  document.getElementById('dashActivityCard').style.display='none';
+}
+
+// پیام‌های تشویقی و سطح‌بندی نویسنده
+function renderEncouragement(s){
+  const approved=Number(s.approved)||0;
+  const levels=[
+    {min:0,name:'تازه‌کار',icon:'🌱',color:'#6b7280'},
+    {min:1,name:'برنزی',icon:'🥉',color:'#cd7f32'},
+    {min:5,name:'نقره‌ای',icon:'🥈',color:'#9ca3af'},
+    {min:15,name:'طلایی',icon:'🥇',color:'#f59e0b'},
+    {min:30,name:'الماسی',icon:'💎',color:'#38bdf8'}
+  ];
+  let lvl=levels[0],next=null;
+  for(let i=0;i<levels.length;i++){if(approved>=levels[i].min)lvl=levels[i];else{next=levels[i];break}}
+  const el=document.getElementById('dashChart');
+  const card=document.getElementById('dashChartCard');
+  card.querySelector('.dash-card-header h3').textContent='سطح شما';
+  let html=`<div class="level-badge" style="background:${lvl.color}1a;border-color:${lvl.color}55">
+      <div class="level-icon">${lvl.icon}</div>
+      <div><div class="level-name" style="color:${lvl.color}">نویسندهٔ ${lvl.name}</div>`;
+  if(next){const need=next.min-approved;
+    html+=`<div class="level-next">${fa(need)} پست دیگه تا سطح ${next.name} ${next.icon}</div>`;
+  }else{html+=`<div class="level-next">به بالاترین سطح رسیدی! 🎉</div>`}
+  html+=`</div></div>`;
+  if(approved===0)html+=`<p class="encourage">اولین پستت رو بنویس و بفرست تا ماجرا شروع بشه! 🚀</p>`;
+  else html+=`<p class="encourage">آفرین! ${fa(approved)} پست تأییدشده داری. همینطور ادامه بده 💪</p>`;
+  el.innerHTML=html;
+}
+
+// ── صف بررسی (مدیر) ─────────────────────────────────────────────────
+async function refreshReviewBadge(){
+  if(currentUser?.role!=='admin')return;
+  try{
+    const q=await api('/review-queue');
+    const badge=document.getElementById('reviewBadge');
+    if(q.length>0){badge.textContent=fa(q.length);badge.classList.remove('hidden')}
+    else badge.classList.add('hidden');
+  }catch{}
+}
+
+async function loadReviewQueue(){
+  const list=document.getElementById('reviewQueueList');
+  list.innerHTML='<div class="loading-row"><div class="spinner"></div></div>';
+  const queue=await api('/review-queue');
+  if(!queue.length){
+    list.innerHTML=`<div class="empty-box"><div class="empty-emoji">🎉</div>
+      <h3>صف خالیه!</h3><p class="muted">هیچ پستی منتظر بررسی نیست.</p></div>`;
+    return;
+  }
+  list.innerHTML=queue.map(q=>`
+    <div class="review-card" data-id="${q.id}">
+      <div class="review-head">
+        <div class="review-title">${q.category_icon||'🏥'} ${esc(q.name)}</div>
+        <span class="review-badge-pending">در انتظار تأیید</span>
+      </div>
+      <div class="review-meta">
+        <span>✍️ ${esc(q.author_name||q.author_username||'نامشخص')}</span>
+        <span>📁 ${esc(q.category_name||'')}</span>
+        <span>🕐 ${Jalali.relative(q.submitted_at)}</span>
+      </div>
+      <div class="review-actions">
+        <button class="btn btn-view" data-act="view" data-id="${q.id}">👁️ مشاهده محتوا</button>
+        <button class="btn btn-approve" data-act="approve" data-id="${q.id}">✅ تأیید و انتشار</button>
+        <button class="btn btn-changes" data-act="changes" data-id="${q.id}">✏️ نیاز به اصلاح</button>
+        <button class="btn btn-reject" data-act="reject" data-id="${q.id}">❌ رد</button>
+      </div>
+    </div>`).join('');
+  list.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',()=>reviewAction(b.dataset.act,parseInt(b.dataset.id))));
+}
+
+async function reviewAction(act,id){
+  if(act==='view'){
+    // محتوای پست را در یک پنجره نشان می‌دهد
+    const op=await api(`/operations/${id}`);
+    openReviewPreview(op);
+    return;
+  }
+  let comment='';
+  if(act==='changes'){comment=prompt('چه تغییری لازم است؟ (برای نویسنده ارسال می‌شود)');if(comment===null)return}
+  if(act==='reject'){comment=prompt('دلیل رد پست؟ (اختیاری، برای نویسنده ارسال می‌شود)')||''}
+  if(act==='approve'&&!confirm('این پست تأیید و منتشر شود؟ بعد از تأیید قفل می‌شود.'))return;
+  try{
+    const res=await api(`/operations/${id}/review`,{method:'POST',body:JSON.stringify({decision:act,comment})});
+    toast(res.message||'انجام شد');
+    loadReviewQueue();refreshReviewBadge();
+  }catch(e){toast(e.message||'خطا','error')}
+}
+
+function openReviewPreview(op){
+  const m=document.getElementById('reviewPreviewModal');
+  document.getElementById('reviewPreviewTitle').textContent=op.name;
+  document.getElementById('reviewPreviewBody').innerHTML=`
+    <div class="preview-section"><h4>شرح عمل</h4><div class="preview-content">${op.description||'<span class="muted">خالی</span>'}</div></div>
+    <div class="preview-section"><h4>ابزارها</h4><div class="preview-content">${op.instruments||'<span class="muted">خالی</span>'}</div></div>`;
+  openModal('reviewPreviewModal');
 }
 
 // Content
@@ -205,6 +383,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
     item.addEventListener('click',e=>{e.preventDefault();showPage(item.dataset.page);
       if(item.dataset.page==='dashboard')loadDashboard();
       if(item.dataset.page==='content')loadContentPanel();
+      if(item.dataset.page==='review')loadReviewQueue();
       if(item.dataset.page==='users')loadUsers();
       if(item.dataset.page==='files')loadFiles()});
   });
@@ -247,8 +426,12 @@ function initAdmin(){
   document.getElementById('adminLayout').classList.remove('hidden');
   if(currentUser){
     document.getElementById('userName').textContent=currentUser.full_name;
-    document.getElementById('userRole').textContent=currentUser.role;
+    const roleFa={admin:'مدیر سیستم',editor:'نویسنده',user:'کاربر'}[currentUser.role]||currentUser.role;
+    document.getElementById('userRole').textContent=roleFa;
     document.getElementById('userAvatar').textContent=currentUser.full_name.charAt(0);
+    // بخش‌های مخصوص مدیر برای نویسنده پنهان می‌شوند
+    const isAdmin=currentUser.role==='admin';
+    document.querySelectorAll('.admin-only').forEach(el=>{el.style.display=isAdmin?'':'none'});
   }
   loadDashboard();
 }
