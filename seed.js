@@ -191,10 +191,23 @@ function seed() {
         VALUES (?, ?, ?, ?, ?, ?)
     `);
 
-    const insertOperation = db.prepare(`
-        INSERT OR IGNORE INTO operations (category_id, op_number, name, sort_order)
-        VALUES (?, ?, ?, ?)
-    `);
+    // محتوای seed شده متعلق به مدیر است و باید «منتشرشده» باشد، نه پیش‌نویس.
+    // چون روی دیتابیس تازه (سرور) مهاجرت‌ها *قبل* از seed اجرا می‌شوند،
+    // ستون status پیش‌فرض 'draft' می‌گیرد و بدون این تنظیم صریح، تمام
+    // عمل‌ها پیش‌نویس و برای بازدیدکننده نامرئی می‌شدند.
+    const opColumns = db.prepare(`PRAGMA table_info(operations)`).all().map(c => c.name);
+    const hasStatus = opColumns.includes('status');
+
+    const insertOperation = hasStatus
+        ? db.prepare(`
+            INSERT OR IGNORE INTO operations
+                (category_id, op_number, name, sort_order, status, is_locked, published_at)
+            VALUES (?, ?, ?, ?, 'approved', 0, CURRENT_TIMESTAMP)
+        `)
+        : db.prepare(`
+            INSERT OR IGNORE INTO operations (category_id, op_number, name, sort_order)
+            VALUES (?, ?, ?, ?)
+        `);
 
     const insertContent = db.prepare(`
         INSERT OR IGNORE INTO operation_content (operation_id)
