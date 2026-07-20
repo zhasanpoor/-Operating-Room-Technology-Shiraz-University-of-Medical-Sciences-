@@ -419,6 +419,14 @@ document.addEventListener('DOMContentLoaded',async()=>{
 
   document.getElementById('menuToggle')?.addEventListener('click',()=>{document.getElementById('sidebar').classList.toggle('open');document.getElementById('sidebarOverlay').classList.toggle('active')});
   document.getElementById('sidebarOverlay')?.addEventListener('click',closeSidebar);
+
+  // هندلرهای واگذارشده — جایگزین onclick درون‌خطی تا CSP سخت‌گیرانه اجازه دهد
+  document.addEventListener('click',e=>{
+    const closeBtn=e.target.closest('[data-close]');
+    if(closeBtn){closeModal(closeBtn.dataset.close);return}
+    const fileBtn=e.target.closest('[data-trigger-file]');
+    if(fileBtn){document.getElementById(fileBtn.dataset.triggerFile)?.click()}
+  });
 });
 
 function initAdmin(){

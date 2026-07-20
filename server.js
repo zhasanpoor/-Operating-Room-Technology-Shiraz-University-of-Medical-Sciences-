@@ -25,19 +25,67 @@ async function main() {
     const app = express();
     const PORT = process.env.PORT || 3000;
 
+    // سیاست امنیتی محتوا (CSP): اسکریپت فقط از خود سایت اجرا می‌شود، پس
+    // حتی اگر رشته‌ای مخرب از پاک‌سازی رد شود، مرورگر اجرایش نمی‌کند.
+    // منابع مجاز دقیقاً همان‌هایی‌اند که سایت واقعاً استفاده می‌کند.
     app.use(helmet({
-        contentSecurityPolicy: false,
+        contentSecurityPolicy: {
+            directives: {
+                defaultSrc: ["'self'"],
+                // 'unsafe-inline' فقط برای استایل لازم است (style=... فراوان
+                // در قالب‌ها). برای اسکریپت لازم نیست چون هندلرهای درون‌خطی
+                // حذف و به فایل منتقل شدند.
+                scriptSrc: ["'self'"],
+                styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+                fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+                imgSrc: ["'self'", 'data:', 'https:'],
+                mediaSrc: ["'self'", 'https:'],
+                // ویدیو و اسلاید داخل iframe از این دامنه‌ها می‌آید
+                frameSrc: [
+                    "'self'",
+                    'https://www.youtube.com', 'https://www.youtube-nocookie.com',
+                    'https://www.aparat.com', 'https://player.vimeo.com',
+                    'https://docs.google.com'
+                ],
+                connectSrc: ["'self'"],
+                objectSrc: ["'none'"],
+                baseUri: ["'self'"],
+                formAction: ["'self'"],
+                frameAncestors: ["'self'"]
+            }
+        },
         crossOriginEmbedderPolicy: false
     }));
-    app.use(cors());
+
+    // CORS محدود به دامنه‌های مجاز. در توسعه (بدون فهرست) آزاد است؛
+    // در production فقط دامنه‌های ALLOWED_ORIGINS و same-origin.
+    const { ALLOWED_ORIGINS, IS_PRODUCTION } = require('./config');
+    app.use(cors({
+        origin(origin, cb) {
+            if (!origin) return cb(null, true);            // same-origin یا ابزار
+            if (!IS_PRODUCTION) return cb(null, true);
+            if (ALLOWED_ORIGINS.length === 0) return cb(null, true);
+            return cb(null, ALLOWED_ORIGINS.includes(origin));
+        },
+        credentials: true
+    }));
+
     app.use(morgan('combined'));
-    app.use(express.json({ limit: '10mb' }));
-    app.use(express.urlencoded({ extended: true }));
+    app.use(express.json({ limit: '2mb' }));
+    app.use(express.urlencoded({ extended: true, limit: '2mb' }));
     app.use(cookieParser());
 
+    // اعتماد به پراکسی Render تا req.ip واقعی باشد (برای محدودیت نرخ و بلاک IP)
+    app.set('trust proxy', 1);
+
+    // محدودیت نرخ عمومی روی کل API — سپر کلی در برابر سیل درخواست.
+    // محافظت اختصاصی brute-force روی لاگین جداگانه در lib/auth-guard است.
     const limiter = rateLimit({
         windowMs: 15 * 60 * 1000,
-        max: 1000
+        max: 300,
+        standardHeaders: true,
+        legacyHeaders: false,
+        message: { error: 'درخواست‌های شما بیش از حد مجاز است. کمی صبر کنید.' }
     });
     app.use('/api/', limiter);
 

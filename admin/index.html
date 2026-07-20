@@ -340,7 +340,7 @@
                         <div class="upload-zone-content">
                             <div class="upload-icon">📎</div>
                             <h3>فایل‌ها را اینجا رها کنید</h3>
-                            <p>یا <button class="link-btn" onclick="document.getElementById('fileInput').click()">کلیک کنید</button> برای انتخاب فایل</p>
+                            <p>یا <button class="link-btn" data-trigger-file="fileInput">کلیک کنید</button> برای انتخاب فایل</p>
                             <p class="upload-hint">پشتیبانی از تصاویر، PDF، و ویدیوها</p>
                         </div>
                     </div>
@@ -355,7 +355,7 @@
         <div class="modal modal-lg">
             <div class="modal-header">
                 <h3 id="reviewPreviewTitle">مشاهدهٔ محتوا</h3>
-                <button class="modal-close" onclick="closeModal('reviewPreviewModal')">
+                <button class="modal-close" data-close="reviewPreviewModal">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                 </button>
             </div>
@@ -370,7 +370,7 @@
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>
                     افزودن کاربر جدید
                 </h3>
-                <button class="modal-close" onclick="closeModal('addUserModal')">
+                <button class="modal-close" data-close="addUserModal">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                 </button>
             </div>
@@ -399,7 +399,7 @@
                         <input type="password" id="newUserPassword" class="input" placeholder="حداقل ۶ کاراکتر" required minlength="6">
                     </div>
                     <div class="modal-footer">
-                        <button type="button" class="btn" onclick="closeModal('addUserModal')">انصراف</button>
+                        <button type="button" class="btn" data-close="addUserModal">انصراف</button>
                         <button type="submit" class="btn btn-primary">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                             افزودن کاربر
@@ -414,7 +414,7 @@
         <div class="modal modal-lg">
             <div class="modal-header">
                 <h3>انتخاب یا آپلود تصویر</h3>
-                <button class="modal-close" onclick="closeModal('imageUploadModal')">
+                <button class="modal-close" data-close="imageUploadModal">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                 </button>
             </div>
