@@ -65,7 +65,7 @@ async function main() {
 
     app.listen(PORT, () => {
         console.log(`\n========================================`);
-        console.log(`  تکنولوژی اتاق عمل - دانشگاه شیراز`);
+        console.log(`  تکنولوژی اتاق عمل — ویژه دانشجویان و متخصصین`);
         console.log(`========================================`);
         console.log(`  سایت اصلی:    http://localhost:${PORT}`);
         console.log(`  پنل مدیریت:   http://localhost:${PORT}/admin`);

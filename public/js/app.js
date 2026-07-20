@@ -461,16 +461,16 @@ const app = {
         });
 
         document.getElementById('authBtn').addEventListener('click', () => {
-            document.getElementById('loginModal').classList.remove('hidden');
+            document.getElementById('loginModalOverlay').classList.remove('hidden');
         });
 
         document.getElementById('loginModalClose').addEventListener('click', () => {
-            document.getElementById('loginModal').classList.add('hidden');
+            document.getElementById('loginModalOverlay').classList.add('hidden');
         });
 
         document.getElementById('loginModalOverlay').addEventListener('click', (e) => {
             if (e.target === document.getElementById('loginModalOverlay')) {
-                document.getElementById('loginModal').classList.add('hidden');
+                document.getElementById('loginModalOverlay').classList.add('hidden');
             }
         });
 
@@ -483,7 +483,7 @@ const app = {
 
             try {
                 await this.login(username, password);
-                document.getElementById('loginModal').classList.add('hidden');
+                document.getElementById('loginModalOverlay').classList.add('hidden');
                 document.getElementById('loginForm').reset();
             } catch (err) {
                 error.textContent = err.message;
