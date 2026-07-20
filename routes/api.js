@@ -1492,6 +1492,28 @@ router.get('/dashboard-stats', authMiddleware, (req, res) => {
             return res.json({ role: 'admin', stats, byStatus, perCategory, recent });
         }
 
+        // کاربر عادی: آمار فعالیت خودش
+        if (req.user.role === 'user') {
+            const stats = db.prepare(`
+                SELECT
+                    (SELECT COUNT(*) FROM user_items
+                     WHERE user_id = ? AND kind = 'favorite') AS favorites,
+                    (SELECT COUNT(*) FROM user_items
+                     WHERE user_id = ? AND kind = 'bookmark') AS bookmarks,
+                    (SELECT COUNT(*) FROM shares WHERE user_id = ?) AS shares
+            `).get(req.user.id, req.user.id, req.user.id);
+
+            const profile = db.prepare(
+                'SELECT author_request_status FROM users WHERE id = ?'
+            ).get(req.user.id);
+
+            return res.json({
+                role: 'user',
+                stats,
+                authorRequestStatus: profile ? profile.author_request_status : 'none'
+            });
+        }
+
         // نویسنده: آمار خودش
         const mine = db.prepare(`
             SELECT

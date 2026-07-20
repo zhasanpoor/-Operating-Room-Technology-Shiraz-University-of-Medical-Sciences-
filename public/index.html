@@ -250,12 +250,22 @@
             </div>
 
             <div class="profile-tabs">
-                <button type="button" class="profile-tab active" data-ptab="info">اطلاعات</button>
+                <button type="button" class="profile-tab active" data-ptab="library">کتابخانهٔ من</button>
+                <button type="button" class="profile-tab" data-ptab="info">اطلاعات</button>
                 <button type="button" class="profile-tab" data-ptab="password">تغییر رمز</button>
                 <button type="button" class="profile-tab" data-ptab="author" id="authorTabBtn">نویسنده شدن</button>
             </div>
 
-            <div class="profile-panel active" id="ppanel-info">
+            <div class="profile-panel active" id="ppanel-library">
+                <div class="lib-stats" id="libStats"></div>
+                <div class="lib-tabs">
+                    <button type="button" class="lib-tab active" data-lib="favorite">❤️ علاقه‌مندی‌ها</button>
+                    <button type="button" class="lib-tab" data-lib="bookmark">🔖 نشان‌شده‌ها</button>
+                </div>
+                <div class="lib-list" id="libList"></div>
+            </div>
+
+            <div class="profile-panel" id="ppanel-info">
                 <form id="profileInfoForm">
                     <div class="login-error hidden" id="profileError"></div>
                     <div class="login-success hidden" id="profileSuccess"></div>

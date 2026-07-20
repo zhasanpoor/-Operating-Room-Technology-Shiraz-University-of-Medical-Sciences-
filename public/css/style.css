@@ -1657,3 +1657,29 @@ body {
 .share-copy-row input{flex:1;min-width:0;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:var(--radius-sm);color:var(--text-secondary);padding:10px 12px;font-family:inherit;font-size:12px;direction:ltr;text-align:left}
 .share-copy-btn{background:linear-gradient(135deg,var(--accent-blue),var(--accent-purple));color:#fff;border:none;border-radius:var(--radius-sm);padding:10px 18px;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
 .share-copy-btn:hover{opacity:.9}
+
+/* کتابخانهٔ کاربر (علاقه‌مندی و نشان) */
+.lib-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px}
+.lib-stat{background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:var(--radius-sm);padding:12px 8px;text-align:center}
+.lib-stat-ico{display:block;font-size:20px;margin-bottom:4px}
+.lib-stat-val{display:block;font-size:19px;font-weight:800;color:var(--text-primary)}
+.lib-stat-label{display:block;font-size:11px;color:var(--text-muted);margin-top:2px}
+
+.lib-tabs{display:flex;gap:8px;margin-bottom:14px}
+.lib-tab{flex:1;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:var(--radius-sm);padding:10px;color:var(--text-secondary);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:var(--transition)}
+.lib-tab.active{background:var(--accent-blue)1a;border-color:var(--accent-blue);color:var(--accent-blue)}
+
+.lib-list{max-height:320px;overflow-y:auto}
+.lib-item{display:flex;align-items:center;gap:12px;padding:12px;border-radius:var(--radius-sm);text-decoration:none;transition:var(--transition);border:1px solid transparent}
+.lib-item:hover{background:var(--bg-secondary);border-color:var(--border-color)}
+.lib-item-ico{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0}
+.lib-item-body{flex:1;min-width:0}
+.lib-item-name{display:block;font-size:14px;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lib-item-cat{display:block;font-size:11.5px;color:var(--text-muted);margin-top:2px}
+.lib-remove{background:none;border:none;color:var(--text-muted);font-size:15px;cursor:pointer;padding:6px 9px;border-radius:6px;flex-shrink:0}
+.lib-remove:hover{background:var(--accent-pink)22;color:var(--accent-pink)}
+
+.lib-empty,.lib-loading{text-align:center;padding:36px 16px;color:var(--text-muted)}
+.lib-empty .empty-emoji{font-size:42px;margin-bottom:10px}
+.lib-empty p{margin-bottom:6px}
+.lib-hint{font-size:12px;opacity:.75}

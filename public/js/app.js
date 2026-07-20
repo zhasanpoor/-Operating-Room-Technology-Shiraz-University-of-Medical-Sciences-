@@ -949,7 +949,7 @@ const app = {
     async openProfile() {
         const overlay = document.getElementById('profileModalOverlay');
         overlay.classList.remove('hidden');
-        this.switchProfileTab('info');
+        this.switchProfileTab('library');
         try {
             const res = await fetch(`${API_BASE}/profile`, {
                 headers: { 'Authorization': `Bearer ${this.token}` }
@@ -1033,6 +1033,76 @@ const app = {
             t.classList.toggle('active', t.dataset.ptab === tab));
         document.querySelectorAll('.profile-panel').forEach(p =>
             p.classList.toggle('active', p.id === `ppanel-${tab}`));
+        if (tab === 'library') this.loadLibrary(this.libraryKind || 'favorite');
+    },
+
+    // ── کتابخانهٔ کاربر: علاقه‌مندی‌ها و نشان‌شده‌ها ──────────────
+    libraryKind: 'favorite',
+
+    async loadLibrary(kind) {
+        this.libraryKind = kind;
+        document.querySelectorAll('.lib-tab').forEach(t =>
+            t.classList.toggle('active', t.dataset.lib === kind));
+
+        const list = document.getElementById('libList');
+        list.innerHTML = '<div class="lib-loading">در حال بارگذاری…</div>';
+
+        try {
+            const [items, dash] = await Promise.all([
+                fetch(`${API_BASE}/my-items?kind=${kind}`, {
+                    headers: { 'Authorization': `Bearer ${this.token}` }
+                }).then(r => r.json()),
+                fetch(`${API_BASE}/dashboard-stats`, {
+                    headers: { 'Authorization': `Bearer ${this.token}` }
+                }).then(r => r.json()).catch(() => null)
+            ]);
+
+            if (dash && dash.stats) {
+                const s = dash.stats;
+                const cards = dash.role === 'user'
+                    ? [['❤️', s.favorites, 'علاقه‌مندی'], ['🔖', s.bookmarks, 'نشان‌شده'],
+                       ['📤', s.shares, 'اشتراک‌گذاری']]
+                    : [['📚', s.total, 'پست'], ['✅', s.approved, 'تأییدشده'],
+                       ['👁️', s.views, 'بازدید']];
+                document.getElementById('libStats').innerHTML = cards.map(([ico, val, label]) =>
+                    `<div class="lib-stat"><span class="lib-stat-ico">${ico}</span>
+                     <span class="lib-stat-val">${this.faNum(val || 0)}</span>
+                     <span class="lib-stat-label">${label}</span></div>`).join('');
+            }
+
+            if (!items.length) {
+                list.innerHTML = `<div class="lib-empty">
+                    <div class="empty-emoji">${kind === 'favorite' ? '💔' : '📭'}</div>
+                    <p>${kind === 'favorite'
+                        ? 'هنوز چیزی به علاقه‌مندی‌هات اضافه نکردی.'
+                        : 'هنوز مطلبی نشان نکردی.'}</p>
+                    <p class="lib-hint">وقتی یه عمل رو باز کنی، دکمه‌اش بالای پنجره‌ست.</p>
+                </div>`;
+                return;
+            }
+
+            list.innerHTML = items.map(item => `
+                <a class="lib-item" href="/op/${encodeURIComponent(item.slug || item.id)}">
+                    <span class="lib-item-ico" style="background:${item.category_color}22">${item.category_icon}</span>
+                    <span class="lib-item-body">
+                        <span class="lib-item-name">${this.esc(item.name)}</span>
+                        <span class="lib-item-cat">${this.esc(item.category_name)} · ${Jalali.relative(item.created_at)}</span>
+                    </span>
+                    <button class="lib-remove" data-id="${item.id}" data-kind="${item.kind}"
+                            title="حذف از فهرست" aria-label="حذف">✕</button>
+                </a>`).join('');
+
+            list.querySelectorAll('.lib-remove').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    await this.toggleItem({ id: parseInt(btn.dataset.id, 10) }, btn.dataset.kind);
+                    this.loadLibrary(kind);
+                });
+            });
+        } catch (err) {
+            list.innerHTML = '<div class="lib-empty"><p>بارگذاری ناموفق بود.</p></div>';
+        }
     },
 
     bindProfileEvents() {
@@ -1041,6 +1111,8 @@ const app = {
         overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.add('hidden'); });
         document.querySelectorAll('.profile-tab').forEach(tab =>
             tab.addEventListener('click', () => this.switchProfileTab(tab.dataset.ptab)));
+        document.querySelectorAll('.lib-tab').forEach(tab =>
+            tab.addEventListener('click', () => this.loadLibrary(tab.dataset.lib)));
 
         // ذخیرهٔ اطلاعات پروفایل
         document.getElementById('profileInfoForm').addEventListener('submit', async (e) => {
