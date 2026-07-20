@@ -12,6 +12,9 @@
     "test:dates": "node scripts/test-jalali.js",
     "test:security": "node scripts/test-sanitize.js",
     "test:db": "node scripts/test-db-adapter.js",
+    "test:permissions": "node scripts/test-permissions.js",
+    "test:accounts": "node scripts/test-accounts.js",
+    "test:api": "node scripts/test-content-api.js",
     "test": "node scripts/test-jalali.js && node scripts/test-sanitize.js && node scripts/test-db-adapter.js",
     "test:api": "node scripts/test-content-api.js",
     "test:permissions": "node scripts/test-permissions.js"

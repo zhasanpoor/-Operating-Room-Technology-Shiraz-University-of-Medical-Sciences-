@@ -7,11 +7,19 @@ const jwt = require('jsonwebtoken');
 const {
     sanitizeRichText, sanitizePlainText, detectThreats, worstSeverity, validateVideoUrl
 } = require('../lib/sanitize');
+const {
+    clientIp, checkLoginGate, recordAttempt, createCaptcha, verifyCaptcha,
+    validatePassword, validateUsername
+} = require('../lib/auth-guard');
 
 // مقدار پیش‌فرض قبلی ('shiraz-ort-secret-key-2024') در همین مخزن عمومی
 // منتشر شده بود و هرکسی می‌توانست با آن توکن مدیر جعل کند.
 // config.js در production بدون secret قوی اجازهٔ بالا آمدن نمی‌دهد.
-const { JWT_SECRET, JWT_EXPIRES_IN, BCRYPT_ROUNDS } = require('../config');
+const {
+    JWT_SECRET, JWT_EXPIRES_IN, BCRYPT_ROUNDS,
+    LOGIN_BLOCK_AFTER, LOGIN_CAPTCHA_AFTER, LOGIN_BLOCK_MINUTES,
+    MAX_AVATAR_BYTES
+} = require('../config');
 
 module.exports = function(db) {
 const router = express.Router();
@@ -22,6 +30,23 @@ const router = express.Router();
  */
 function nz(value) {
     return value === undefined ? null : value;
+}
+
+/**
+ * ثبت رویداد حساس در لاگ ممیزی.
+ * عمداً هرگز throw نمی‌کند — شکست در لاگ‌گیری نباید عملیات اصلی را خراب کند.
+ */
+function writeAudit(req, action, targetType, targetId, detail) {
+    try {
+        db.prepare(`
+            INSERT INTO audit_log (user_id, action, target_type, target_id, detail, ip)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `).run(req.user ? req.user.id : null, action, targetType || '',
+               targetId || null, String(detail || '').slice(0, 500),
+               clientIp(req));
+    } catch (err) {
+        console.error('ثبت لاگ ممیزی ناموفق:', err.message);
+    }
 }
 
 const storage = multer.diskStorage({
@@ -176,20 +201,105 @@ function visibilityFilter(user) {
 }
 
 // Auth
-router.post('/auth/login', async (req, res) => {
+
+/** وضعیت ورود — کلاینت می‌پرسد آیا کپچا لازم است یا بلاک شده. */
+router.get('/auth/gate', (req, res) => {
     try {
-        const { username, password } = req.body;
+        const ip = clientIp(req);
+        const gate = checkLoginGate(db, req.query.username, ip);
+        const payload = {
+            blocked: gate.blocked,
+            needsCaptcha: gate.needsCaptcha,
+            remainingSeconds: gate.seconds
+        };
+        if (gate.needsCaptcha && !gate.blocked) payload.captcha = createCaptcha();
+        res.json(payload);
+    } catch (err) {
+        res.json({ blocked: false, needsCaptcha: false, remainingSeconds: 0 });
+    }
+});
+
+router.post('/auth/login', async (req, res) => {
+    const ip = clientIp(req);
+    try {
+        const { username, password, captchaToken, captchaAnswer } = req.body;
         if (!username || !password) {
-            return res.status(400).json({ error: 'نام کاربری و رمز عبور الزامی است' });
+            return res.status(400).json({ error: 'نام کاربری و رمز عبور را وارد کنید.' });
         }
-        const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
-        if (!user) {
-            return res.status(401).json({ error: 'نام کاربری یا رمز عبور اشتباه است' });
+
+        // ── دروازهٔ ضد حدس رمز ──────────────────────────────────────
+        const gate = checkLoginGate(db, username, ip);
+
+        if (gate.blocked) {
+            const minutes = Math.ceil(gate.seconds / 60);
+            return res.status(429).json({
+                error: `به دلیل تلاش‌های ناموفق زیاد، ورود موقتاً بسته شده. حدود ${minutes} دقیقهٔ دیگر دوباره امتحان کنید.`,
+                blocked: true,
+                remainingSeconds: gate.seconds
+            });
         }
+
+        if (gate.needsCaptcha && !verifyCaptcha(captchaToken, captchaAnswer)) {
+            // کپچای غلط هم یک تلاش ناموفق حساب می‌شود. اگر نشود، شمارنده
+            // روی ۳ قفل می‌ماند و بلاکِ ۵ تلاش هرگز فعال نمی‌شود — یعنی
+            // مهاجم می‌تواند بی‌نهایت به این مسیر فشار بیاورد.
+            const attempt = recordAttempt(db, {
+                username, ip, success: false, userAgent: req.headers['user-agent']
+            });
+            if (attempt.blocked) {
+                return res.status(429).json({
+                    error: `تلاش‌های ناموفق زیاد بود. ورود به مدت ${LOGIN_BLOCK_MINUTES} دقیقه بسته شد.`,
+                    blocked: true
+                });
+            }
+            return res.status(400).json({
+                error: 'پاسخ سؤال امنیتی درست نیست.',
+                needsCaptcha: true,
+                captcha: createCaptcha()
+            });
+        }
+
+        const user = db.prepare('SELECT * FROM users WHERE username = ?')
+                       .get(String(username).toLowerCase().trim());
+
+        // پیام یکسان برای «کاربر نیست» و «رمز غلط» تا نام‌های کاربری لو نروند
+        const invalid = () => {
+            const result = recordAttempt(db, {
+                username, ip, success: false, userAgent: req.headers['user-agent']
+            });
+            const body = { error: 'نام کاربری یا رمز عبور اشتباه است.' };
+            if (result.blocked) {
+                body.error = `تلاش‌های ناموفق زیاد بود. ورود به مدت ${LOGIN_BLOCK_MINUTES} دقیقه بسته شد.`;
+                body.blocked = true;
+            } else {
+                const after = checkLoginGate(db, username, ip);
+                if (after.needsCaptcha) {
+                    body.needsCaptcha = true;
+                    body.captcha = createCaptcha();
+                }
+                const left = LOGIN_BLOCK_AFTER - after.attempts;
+                if (left > 0 && after.attempts >= LOGIN_CAPTCHA_AFTER) {
+                    body.error += ` (${left} تلاش دیگر تا بسته شدن موقت)`;
+                }
+            }
+            return res.status(401).json(body);
+        };
+
+        if (!user) return invalid();
+
         const passwordMatch = await bcrypt.compare(password, user.password);
-        if (!passwordMatch) {
-            return res.status(401).json({ error: 'نام کاربری یا رمز عبور اشتباه است' });
+        if (!passwordMatch) return invalid();
+
+        if (user.is_active === 0) {
+            recordAttempt(db, { username, ip, success: false, userAgent: req.headers['user-agent'] });
+            return res.status(403).json({
+                error: 'حساب شما غیرفعال شده است. برای پیگیری با مدیر سایت تماس بگیرید.'
+            });
         }
+
+        recordAttempt(db, { username, ip, success: true, userAgent: req.headers['user-agent'] });
+        db.prepare('UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
+
         const token = jwt.sign(
             { id: user.id, username: user.username, role: user.role, full_name: user.full_name },
             JWT_SECRET,
@@ -197,10 +307,79 @@ router.post('/auth/login', async (req, res) => {
         );
         res.json({
             token,
-            user: { id: user.id, username: user.username, full_name: user.full_name, role: user.role }
+            user: {
+                id: user.id, username: user.username, full_name: user.full_name,
+                role: user.role, avatar: user.avatar || ''
+            }
         });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error('خطا در ورود:', err.message);
+        res.status(500).json({ error: 'ورود انجام نشد. کمی بعد دوباره تلاش کنید.' });
+    }
+});
+
+/** ثبت‌نام عمومی — کاربر عادی می‌سازد. */
+router.post('/auth/signup', async (req, res) => {
+    const ip = clientIp(req);
+    try {
+        const { username, password, full_name, email } = req.body;
+
+        const uname = validateUsername(username);
+        if (!uname.ok) return res.status(400).json({ error: uname.error });
+
+        const pwd = validatePassword(password, { username: uname.value });
+        if (!pwd.ok) return res.status(400).json({ error: pwd.error });
+
+        const name = sanitizePlainText(full_name);
+        if (!name || name.length < 3) {
+            return res.status(400).json({ error: 'نام و نام خانوادگی را کامل وارد کنید.' });
+        }
+
+        let cleanEmail = null;
+        if (email) {
+            cleanEmail = sanitizePlainText(email).toLowerCase();
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail)) {
+                return res.status(400).json({ error: 'ایمیل معتبر نیست.' });
+            }
+            const emailTaken = db.prepare('SELECT id FROM users WHERE email = ?').get(cleanEmail);
+            if (emailTaken) {
+                return res.status(400).json({ error: 'این ایمیل قبلاً ثبت شده است.' });
+            }
+        }
+
+        const exists = db.prepare('SELECT id FROM users WHERE username = ?').get(uname.value);
+        if (exists) {
+            return res.status(400).json({ error: 'این نام کاربری قبلاً گرفته شده. یکی دیگر انتخاب کنید.' });
+        }
+
+        const hashed = await bcrypt.hash(password, BCRYPT_ROUNDS);
+        const result = db.prepare(`
+            INSERT INTO users (username, password, full_name, email, role, is_active, password_changed_at)
+            VALUES (?, ?, ?, ?, 'user', 1, CURRENT_TIMESTAMP)
+        `).run(uname.value, hashed, name, cleanEmail);
+
+        const userId = result.lastInsertRowid;
+
+        db.prepare(`INSERT INTO notifications (user_id, title, body, icon)
+                    VALUES (?, ?, ?, '🎉')`)
+          .run(userId, 'به جمع ما خوش اومدی!',
+               'حسابت ساخته شد. اگه دوست داری مطلب بنویسی، از پروفایلت درخواست نویسندگی بده.');
+
+        const token = jwt.sign(
+            { id: userId, username: uname.value, role: 'user', full_name: name },
+            JWT_SECRET, { expiresIn: JWT_EXPIRES_IN }
+        );
+
+        recordAttempt(db, { username: uname.value, ip, success: true, userAgent: req.headers['user-agent'] });
+
+        res.json({
+            token,
+            user: { id: userId, username: uname.value, full_name: name, role: 'user', avatar: '' },
+            message: 'ثبت‌نامت انجام شد. خوش اومدی!'
+        });
+    } catch (err) {
+        console.error('خطا در ثبت‌نام:', err.message);
+        res.status(500).json({ error: 'ثبت‌نام انجام نشد. کمی بعد دوباره تلاش کنید.' });
     }
 });
 
@@ -230,16 +409,405 @@ router.get('/auth/me', authMiddleware, (req, res) => {
 });
 
 router.get('/auth/users', authMiddleware, requireAdmin, (req, res) => {
-    const users = db.prepare('SELECT id, username, full_name, role, created_at FROM users ORDER BY id').all();
-    res.json(users);
+    try {
+        const users = db.prepare(`
+            SELECT u.id, u.username, u.full_name, u.email, u.role, u.avatar,
+                   u.is_active, u.author_request_status, u.author_request_note,
+                   u.author_requested_at, u.last_login_at, u.created_at,
+                   (SELECT COUNT(*) FROM operations WHERE author_id = u.id) AS post_count
+            FROM users u ORDER BY u.id
+        `).all();
+        res.json(users);
+    } catch (err) {
+        res.status(500).json({ error: 'خواندن کاربران ناموفق بود.' });
+    }
 });
 
 router.delete('/auth/users/:id', authMiddleware, requireAdmin, (req, res) => {
-    if (parseInt(req.params.id) === req.user.id) {
-        return res.status(400).json({ error: 'نمی‌توانید خودتان را حذف کنید' });
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (id === req.user.id) {
+            return res.status(400).json({ error: 'نمی‌توانید حساب خودتان را حذف کنید.' });
+        }
+        const target = db.prepare('SELECT id, role FROM users WHERE id = ?').get(id);
+        if (!target) return res.status(404).json({ error: 'کاربر پیدا نشد.' });
+
+        // نباید آخرین مدیر حذف شود وگرنه هیچ‌کس به پنل دسترسی ندارد
+        if (target.role === 'admin') {
+            const admins = db.prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'admin'").get().c;
+            if (admins <= 1) {
+                return res.status(400).json({ error: 'این تنها مدیر سایت است و نمی‌شود حذفش کرد.' });
+            }
+        }
+
+        // پست‌های کاربر حذف نمی‌شوند؛ فقط بی‌صاحب می‌شوند تا محتوا از بین نرود
+        db.prepare('UPDATE operations SET author_id = NULL WHERE author_id = ?').run(id);
+        db.prepare('DELETE FROM users WHERE id = ?').run(id);
+        writeAudit(req, 'user_delete', 'user', id, `حذف کاربر ${id}`);
+        res.json({ message: 'کاربر حذف شد.' });
+    } catch (err) {
+        console.error('خطا در حذف کاربر:', err.message);
+        res.status(500).json({ error: 'حذف کاربر انجام نشد.' });
     }
-    db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
-    res.json({ message: 'کاربر حذف شد' });
+});
+
+/** فعال یا غیرفعال کردن حساب کاربر. */
+router.post('/auth/users/:id/active', authMiddleware, requireAdmin, (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (id === req.user.id) {
+            return res.status(400).json({ error: 'نمی‌توانید حساب خودتان را غیرفعال کنید.' });
+        }
+        const target = db.prepare('SELECT id, role, full_name FROM users WHERE id = ?').get(id);
+        if (!target) return res.status(404).json({ error: 'کاربر پیدا نشد.' });
+
+        const active = req.body.is_active ? 1 : 0;
+        if (!active && target.role === 'admin') {
+            const admins = db.prepare(
+                "SELECT COUNT(*) AS c FROM users WHERE role = 'admin' AND is_active = 1"
+            ).get().c;
+            if (admins <= 1) {
+                return res.status(400).json({ error: 'این تنها مدیر فعال سایت است.' });
+            }
+        }
+
+        const reason = sanitizePlainText(req.body.reason || '');
+        db.prepare('UPDATE users SET is_active = ?, suspended_reason = ? WHERE id = ?')
+          .run(active, active ? '' : reason, id);
+
+        db.prepare(`INSERT INTO notifications (user_id, title, body, icon)
+                    VALUES (?, ?, ?, ?)`)
+          .run(id,
+               active ? 'حسابت دوباره فعال شد' : 'حسابت غیرفعال شد',
+               active ? 'می‌تونی دوباره وارد بشی.' : (reason || 'برای پیگیری با مدیر سایت تماس بگیر.'),
+               active ? '✅' : '🚫');
+
+        writeAudit(req, active ? 'user_activate' : 'user_deactivate', 'user', id,
+                   `${target.full_name}${reason ? ' — ' + reason : ''}`);
+        res.json({ message: active ? 'کاربر فعال شد.' : 'کاربر غیرفعال شد.' });
+    } catch (err) {
+        console.error('خطا در تغییر وضعیت کاربر:', err.message);
+        res.status(500).json({ error: 'تغییر وضعیت انجام نشد.' });
+    }
+});
+
+/** تغییر سطح دسترسی کاربر. */
+router.post('/auth/users/:id/role', authMiddleware, requireAdmin, (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        const role = req.body.role;
+        if (!['admin', 'editor', 'user'].includes(role)) {
+            return res.status(400).json({ error: 'سطح دسترسی نامعتبر است.' });
+        }
+        const target = db.prepare('SELECT id, role, full_name FROM users WHERE id = ?').get(id);
+        if (!target) return res.status(404).json({ error: 'کاربر پیدا نشد.' });
+
+        if (id === req.user.id && role !== 'admin') {
+            return res.status(400).json({ error: 'نمی‌توانید سطح دسترسی خودتان را پایین بیاورید.' });
+        }
+        if (target.role === 'admin' && role !== 'admin') {
+            const admins = db.prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'admin'").get().c;
+            if (admins <= 1) {
+                return res.status(400).json({ error: 'این تنها مدیر سایت است.' });
+            }
+        }
+
+        // نکتهٔ مهم: پست‌ها و امتیاز کاربر دست نمی‌خورند. اگر بعداً دوباره
+        // نویسنده شود، همهٔ سابقه و آمار قبلی‌اش سر جایش است.
+        db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, id);
+
+        const roleFa = { admin: 'مدیر', editor: 'نویسنده', user: 'کاربر عادی' }[role];
+        db.prepare(`INSERT INTO notifications (user_id, title, body, icon)
+                    VALUES (?, ?, ?, '🔄')`)
+          .run(id, 'سطح دسترسی‌ات عوض شد', `الان سطح دسترسی تو «${roleFa}» است.`);
+
+        writeAudit(req, 'user_role_change', 'user', id,
+                   `${target.full_name}: ${target.role} → ${role}`);
+        res.json({ message: `سطح دسترسی به «${roleFa}» تغییر کرد.` });
+    } catch (err) {
+        console.error('خطا در تغییر نقش:', err.message);
+        res.status(500).json({ error: 'تغییر سطح دسترسی انجام نشد.' });
+    }
+});
+
+// ── پروفایل کاربر ───────────────────────────────────────────────────
+
+router.get('/profile', authMiddleware, (req, res) => {
+    try {
+        const user = db.prepare(`
+            SELECT id, username, full_name, email, bio, avatar, role, points,
+                   author_request_status, author_request_note, onboarded,
+                   last_login_at, created_at
+            FROM users WHERE id = ?
+        `).get(req.user.id);
+        res.json(user);
+    } catch (err) {
+        res.status(500).json({ error: 'خواندن پروفایل ناموفق بود.' });
+    }
+});
+
+router.put('/profile', authMiddleware, (req, res) => {
+    try {
+        const { full_name, email, bio } = req.body;
+        const updates = {};
+
+        if (full_name !== undefined) {
+            const name = sanitizePlainText(full_name);
+            if (name.length < 3) {
+                return res.status(400).json({ error: 'نام باید حداقل ۳ کاراکتر باشد.' });
+            }
+            updates.full_name = name;
+        }
+
+        if (email !== undefined) {
+            if (email === '' || email === null) {
+                updates.email = null;
+            } else {
+                const clean = sanitizePlainText(email).toLowerCase();
+                if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(clean)) {
+                    return res.status(400).json({ error: 'ایمیل معتبر نیست.' });
+                }
+                const taken = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?')
+                                .get(clean, req.user.id);
+                if (taken) return res.status(400).json({ error: 'این ایمیل برای کاربر دیگری ثبت شده.' });
+                updates.email = clean;
+            }
+        }
+
+        if (bio !== undefined) {
+            updates.bio = sanitizePlainText(bio).slice(0, 500);
+        }
+
+        if (Object.keys(updates).length === 0) {
+            return res.status(400).json({ error: 'چیزی برای تغییر نفرستادید.' });
+        }
+
+        const fields = Object.keys(updates).map(k => `${k} = ?`).join(', ');
+        db.prepare(`UPDATE users SET ${fields} WHERE id = ?`)
+          .run(...Object.values(updates), req.user.id);
+
+        res.json({ message: 'پروفایلت به‌روز شد.' });
+    } catch (err) {
+        console.error('خطا در به‌روزرسانی پروفایل:', err.message);
+        res.status(500).json({ error: 'به‌روزرسانی پروفایل انجام نشد.' });
+    }
+});
+
+/** تغییر رمز عبور — نیازمند رمز فعلی. */
+router.post('/profile/password', authMiddleware, async (req, res) => {
+    try {
+        const { current_password, new_password } = req.body;
+        if (!current_password || !new_password) {
+            return res.status(400).json({ error: 'رمز فعلی و رمز جدید را وارد کنید.' });
+        }
+
+        const user = db.prepare('SELECT id, username, password FROM users WHERE id = ?')
+                       .get(req.user.id);
+        const matches = await bcrypt.compare(current_password, user.password);
+        if (!matches) {
+            return res.status(401).json({ error: 'رمز فعلی درست نیست.' });
+        }
+
+        const check = validatePassword(new_password, { username: user.username });
+        if (!check.ok) return res.status(400).json({ error: check.error });
+
+        if (await bcrypt.compare(new_password, user.password)) {
+            return res.status(400).json({ error: 'رمز جدید با رمز فعلی یکی است.' });
+        }
+
+        const hashed = await bcrypt.hash(new_password, BCRYPT_ROUNDS);
+        db.prepare('UPDATE users SET password = ?, password_changed_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .run(hashed, req.user.id);
+
+        writeAudit(req, 'password_change', 'user', req.user.id, 'تغییر رمز عبور');
+        res.json({ message: 'رمز عبورت عوض شد.' });
+    } catch (err) {
+        console.error('خطا در تغییر رمز:', err.message);
+        res.status(500).json({ error: 'تغییر رمز انجام نشد.' });
+    }
+});
+
+/** درخواست ارتقا به نویسنده. */
+router.post('/profile/request-author', authMiddleware, (req, res) => {
+    try {
+        if (req.user.role !== 'user') {
+            return res.status(400).json({ error: 'شما از قبل دسترسی نویسندگی دارید.' });
+        }
+        const current = db.prepare('SELECT author_request_status FROM users WHERE id = ?')
+                          .get(req.user.id);
+        if (current.author_request_status === 'pending') {
+            return res.status(400).json({ error: 'درخواست شما قبلاً ثبت شده و در حال بررسی است.' });
+        }
+
+        const note = sanitizePlainText(req.body.note || '').slice(0, 500);
+        db.prepare(`UPDATE users SET author_request_status = 'pending',
+                    author_request_note = ?, author_requested_at = CURRENT_TIMESTAMP
+                    WHERE id = ?`).run(note, req.user.id);
+
+        const admin = db.prepare("SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").get();
+        if (admin) {
+            db.prepare(`INSERT INTO notifications (user_id, title, body, icon)
+                        VALUES (?, ?, ?, '✍️')`)
+              .run(admin.id, 'درخواست نویسندگی جدید',
+                   `${req.user.full_name} می‌خواهد نویسنده شود.`);
+        }
+
+        res.json({ message: 'درخواستت ثبت شد. مدیر سایت بررسی می‌کند و خبرت می‌کنیم.' });
+    } catch (err) {
+        console.error('خطا در درخواست نویسندگی:', err.message);
+        res.status(500).json({ error: 'ثبت درخواست انجام نشد.' });
+    }
+});
+
+/**
+ * آپلود عکس پروفایل.
+ * محدودیت‌ها سخت‌گیرانه‌تر از آپلود عمومی است: فقط تصویر، حجم کم،
+ * و بررسی «امضای واقعی فایل» نه فقط پسوند — چون پسوند به‌راحتی جعل می‌شود.
+ */
+const avatarUpload = multer({
+    storage: multer.diskStorage({
+        destination: (req, file, cb) => {
+            const dir = path.join(__dirname, '..', 'uploads', 'avatars');
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            cb(null, dir);
+        },
+        filename: (req, file, cb) => {
+            const ext = { 'image/jpeg': '.jpg', 'image/png': '.png',
+                          'image/webp': '.webp' }[file.mimetype] || '.img';
+            cb(null, `u${req.user.id}-${Date.now()}${ext}`);
+        }
+    }),
+    limits: { fileSize: MAX_AVATAR_BYTES, files: 1 },
+    fileFilter: (req, file, cb) => {
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) {
+            return cb(new Error('فقط عکس JPG، PNG یا WebP قابل قبول است.'));
+        }
+        cb(null, true);
+    }
+});
+
+/** امضای واقعی فایل تصویر را می‌سنجد (magic bytes). */
+function looksLikeImage(filePath) {
+    let fd;
+    try {
+        const buf = Buffer.alloc(12);
+        fd = fs.openSync(filePath, 'r');
+        fs.readSync(fd, buf, 0, 12, 0);
+        const isJpg = buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF;
+        const isPng = buf.slice(0, 8).equals(Buffer.from([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A]));
+        const isWebp = buf.slice(0, 4).toString('ascii') === 'RIFF'
+                    && buf.slice(8, 12).toString('ascii') === 'WEBP';
+        return isJpg || isPng || isWebp;
+    } catch (e) {
+        return false;
+    } finally {
+        if (fd !== undefined) try { fs.closeSync(fd); } catch (e) {}
+    }
+}
+
+router.post('/profile/avatar', authMiddleware, (req, res) => {
+    avatarUpload.single('avatar')(req, res, (uploadErr) => {
+        if (uploadErr) {
+            const tooBig = uploadErr.code === 'LIMIT_FILE_SIZE';
+            return res.status(400).json({
+                error: tooBig
+                    ? `حجم عکس نباید بیشتر از ${Math.round(MAX_AVATAR_BYTES / 1024 / 1024)} مگابایت باشد.`
+                    : (uploadErr.message || 'آپلود عکس انجام نشد.')
+            });
+        }
+        if (!req.file) return res.status(400).json({ error: 'عکسی انتخاب نشده.' });
+
+        // پسوند و MIME را کلاینت می‌فرستد و قابل جعل است؛ محتوای واقعی
+        // فایل باید بررسی شود تا کسی اسکریپت را به اسم عکس آپلود نکند.
+        if (!looksLikeImage(req.file.path)) {
+            try { fs.unlinkSync(req.file.path); } catch (e) {}
+            try {
+                db.prepare(`INSERT INTO security_events
+                    (user_id, event_type, severity, detail, ip)
+                    VALUES (?, 'bad_upload', 'high', ?, ?)`)
+                  .run(req.user.id,
+                       `فایلی با نام ${req.file.originalname} به‌عنوان عکس آپلود شد ولی تصویر نبود.`,
+                       clientIp(req));
+            } catch (e) {}
+            return res.status(400).json({ error: 'این فایل عکس معتبری نیست.' });
+        }
+
+        try {
+            const url = `/uploads/avatars/${req.file.filename}`;
+
+            // عکس قبلی پاک شود تا دیسک پر نشود
+            const previous = db.prepare('SELECT avatar FROM users WHERE id = ?').get(req.user.id);
+            if (previous && previous.avatar && previous.avatar.startsWith('/uploads/avatars/')) {
+                const oldPath = path.join(__dirname, '..', previous.avatar.replace(/^\//, ''));
+                if (fs.existsSync(oldPath)) { try { fs.unlinkSync(oldPath); } catch (e) {} }
+            }
+
+            db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(url, req.user.id);
+            db.prepare(`INSERT INTO uploaded_files
+                        (original_name, stored_name, file_type, file_size, uploaded_by)
+                        VALUES (?, ?, ?, ?, ?)`)
+              .run(req.file.originalname, 'avatars/' + req.file.filename,
+                   req.file.mimetype, req.file.size, req.user.id);
+
+            res.json({ url, message: 'عکس پروفایلت عوض شد.' });
+        } catch (err) {
+            console.error('خطا در ذخیرهٔ آواتار:', err.message);
+            res.status(500).json({ error: 'ذخیرهٔ عکس انجام نشد.' });
+        }
+    });
+});
+
+/** فهرست درخواست‌های نویسندگی — برای مدیر. */
+router.get('/author-requests', authMiddleware, requireAdmin, (req, res) => {
+    try {
+        const requests = db.prepare(`
+            SELECT id, username, full_name, email, bio, avatar,
+                   author_request_note, author_requested_at
+            FROM users WHERE author_request_status = 'pending'
+            ORDER BY author_requested_at ASC
+        `).all();
+        res.json(requests);
+    } catch (err) {
+        res.status(500).json({ error: 'خواندن درخواست‌ها ناموفق بود.' });
+    }
+});
+
+/** تأیید یا رد درخواست نویسندگی. */
+router.post('/author-requests/:id', authMiddleware, requireAdmin, (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        const approve = req.body.decision === 'approve';
+        const note = sanitizePlainText(req.body.note || '');
+
+        const target = db.prepare(
+            'SELECT id, full_name, author_request_status FROM users WHERE id = ?'
+        ).get(id);
+        if (!target) return res.status(404).json({ error: 'کاربر پیدا نشد.' });
+        if (target.author_request_status !== 'pending') {
+            return res.status(400).json({ error: 'این درخواست قبلاً بررسی شده است.' });
+        }
+
+        if (approve) {
+            db.prepare(`UPDATE users SET role = 'editor', author_request_status = 'approved'
+                        WHERE id = ?`).run(id);
+            db.prepare(`INSERT INTO notifications (user_id, title, body, icon)
+                        VALUES (?, ?, ?, '🎉')`)
+              .run(id, 'تبریک! نویسنده شدی 🎉',
+                   'از این به بعد می‌تونی پست بنویسی و برای تأیید بفرستی. اولین پستت رو بنویس!');
+        } else {
+            db.prepare(`UPDATE users SET author_request_status = 'rejected' WHERE id = ?`).run(id);
+            db.prepare(`INSERT INTO notifications (user_id, title, body, icon)
+                        VALUES (?, ?, ?, '📋')`)
+              .run(id, 'درخواست نویسندگی',
+                   note || 'فعلاً با درخواستت موافقت نشد. می‌تونی بعداً دوباره تلاش کنی.');
+        }
+
+        writeAudit(req, approve ? 'author_approve' : 'author_reject', 'user', id, target.full_name);
+        res.json({ message: approve ? 'کاربر نویسنده شد.' : 'درخواست رد شد.' });
+    } catch (err) {
+        console.error('خطا در بررسی درخواست نویسندگی:', err.message);
+        res.status(500).json({ error: 'بررسی درخواست انجام نشد.' });
+    }
 });
 
 // Categories
