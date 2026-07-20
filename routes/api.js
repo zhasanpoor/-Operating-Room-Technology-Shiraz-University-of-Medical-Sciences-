@@ -11,6 +11,7 @@ const {
     clientIp, checkLoginGate, recordAttempt, createCaptcha, verifyCaptcha,
     validatePassword, validateUsername
 } = require('../lib/auth-guard');
+const { uniqueSlug } = require('../lib/slug');
 
 // مقدار پیش‌فرض قبلی ('shiraz-ort-secret-key-2024') در همین مخزن عمومی
 // منتشر شده بود و هرکسی می‌توانست با آن توکن مدیر جعل کند.
@@ -964,13 +965,23 @@ router.post('/operations', authMiddleware, requireAuthor, (req, res) => {
         const isAdmin = req.user.role === 'admin';
         const status = isAdmin ? 'approved' : 'draft';
 
+        // آدرس خوانا برای سئو و اشتراک‌گذاری — بدون این، لینک پست فقط
+        // شناسهٔ عددی می‌شود که نه برای کاربر معنا دارد نه برای گوگل.
+        const cleanName = sanitizePlainText(name);
+        const cleanNumber = sanitizePlainText(op_number);
+        const taken = new Set(
+            db.prepare('SELECT slug FROM operations WHERE slug IS NOT NULL')
+              .all().map(r => r.slug)
+        );
+
         const result = db.prepare(`
             INSERT INTO operations (category_id, op_number, name, sort_order,
-                                    author_id, status, is_locked, published_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(category_id, sanitizePlainText(op_number), sanitizePlainText(name),
+                                    author_id, status, is_locked, published_at, slug)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(category_id, cleanNumber, cleanName,
                sort_order || 0, req.user.id, status, 0,
-               isAdmin ? new Date().toISOString() : null);
+               isAdmin ? new Date().toISOString() : null,
+               uniqueSlug(cleanName, cleanNumber, taken));
 
         db.prepare(`INSERT INTO operation_content (operation_id) VALUES (?)`).run(result.lastInsertRowid);
 

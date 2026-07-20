@@ -11,7 +11,7 @@ const app = {
         this.token = localStorage.getItem('auth_token');
         if (this.token) {
             await this.checkAuth();
-            if (this.token) this.loadNotifications();
+            if (this.token) { this.loadNotifications(); await this.loadMyItems(); }
         }
         this.updateAuthUI();
         await this.loadStats();
@@ -159,6 +159,154 @@ const app = {
 
     faNum(n) { return String(n).replace(/[0-9]/g, d => '۰۱۲۳۴۵۶۷۸۹'[d]); },
     esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; },
+
+    // ── علاقه‌مندی و نشان کردن ──────────────────────────────────
+    myFavorites: [],
+    myBookmarks: [],
+
+    async loadMyItems() {
+        if (!this.token) { this.myFavorites = []; this.myBookmarks = []; return; }
+        try {
+            const res = await fetch(`${API_BASE}/my-item-ids`, {
+                headers: { 'Authorization': `Bearer ${this.token}` }
+            });
+            const data = await res.json();
+            this.myFavorites = data.favorites || [];
+            this.myBookmarks = data.bookmarks || [];
+        } catch (e) { /* مهم نیست */ }
+    },
+
+    async toggleItem(op, kind) {
+        if (!this.token) {
+            this.toast('برای این کار اول وارد شو 🙂', 'error');
+            this.openAuthModal('login');
+            return;
+        }
+        try {
+            const res = await fetch(`${API_BASE}/operations/${op.id}/${kind}`, {
+                method: 'POST', headers: { 'Authorization': `Bearer ${this.token}` }
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error);
+
+            const list = kind === 'favorite' ? this.myFavorites : this.myBookmarks;
+            const idx = list.indexOf(op.id);
+            if (data.active && idx === -1) list.push(op.id);
+            if (!data.active && idx !== -1) list.splice(idx, 1);
+
+            // به‌روزرسانی ظاهر دکمه بدون بستن مودال
+            const btn = document.getElementById(kind === 'favorite' ? 'btnFav' : 'btnMark');
+            const txt = document.getElementById(kind === 'favorite' ? 'btnFavText' : 'btnMarkText');
+            if (btn) {
+                btn.classList.toggle('active', data.active);
+                btn.querySelector('.op-act-ico').textContent = kind === 'favorite'
+                    ? (data.active ? '❤️' : '🤍') : (data.active ? '🔖' : '📑');
+                if (txt) txt.textContent = kind === 'favorite'
+                    ? (data.active ? 'در علاقه‌مندی‌ها' : 'علاقه‌مندی')
+                    : (data.active ? 'نشان‌شده' : 'نشان کردن');
+            }
+            this.toast(data.message);
+        } catch (err) {
+            this.toast(err.message || 'انجام نشد', 'error');
+        }
+    },
+
+    // ── اشتراک‌گذاری ────────────────────────────────────────────
+    shareUrlFor(op) {
+        return `${location.origin}/op/${op.slug || op.id}`;
+    },
+
+    async openShare(op) {
+        const url = this.shareUrlFor(op);
+        const title = `${op.name} — تکنولوژی اتاق عمل`;
+
+        // روی موبایل، اشتراک بومی سیستم‌عامل بهترین تجربه است
+        if (navigator.share) {
+            try {
+                await navigator.share({ title, text: title, url });
+                this.recordShare(op.id, 'native');
+                return;
+            } catch (e) {
+                // کاربر لغو کرد یا پشتیبانی نشد — به پنل خودمان برمی‌گردیم
+                if (e && e.name === 'AbortError') return;
+            }
+        }
+        this.showShareSheet(op, url, title);
+    },
+
+    showShareSheet(op, url, title) {
+        const t = encodeURIComponent(title);
+        const u = encodeURIComponent(url);
+        const networks = [
+            { key: 'telegram', name: 'تلگرام',  icon: '✈️', href: `https://t.me/share/url?url=${u}&text=${t}` },
+            { key: 'whatsapp', name: 'واتساپ',  icon: '💬', href: `https://api.whatsapp.com/send?text=${t}%20${u}` },
+            { key: 'eitaa',    name: 'ایتا',    icon: '🟠', href: `https://eitaa.com/share/url?url=${u}&text=${t}` },
+            { key: 'bale',     name: 'بله',     icon: '🔵', href: `https://bale.ai/share/url?url=${u}&text=${t}` },
+            { key: 'rubika',   name: 'روبیکا',  icon: '🟣', href: `https://rubika.ir/share?url=${u}&text=${t}` },
+            { key: 'twitter',  name: 'ایکس',    icon: '𝕏',  href: `https://twitter.com/intent/tweet?url=${u}&text=${t}` },
+            { key: 'linkedin', name: 'لینکدین', icon: '💼', href: `https://www.linkedin.com/sharing/share-offsite/?url=${u}` },
+            { key: 'email',    name: 'ایمیل',   icon: '✉️', href: `mailto:?subject=${t}&body=${u}` }
+        ];
+
+        const existing = document.getElementById('shareSheet');
+        if (existing) existing.remove();
+
+        const sheet = document.createElement('div');
+        sheet.className = 'share-overlay';
+        sheet.id = 'shareSheet';
+        sheet.innerHTML = `
+            <div class="share-sheet">
+                <div class="share-head">
+                    <h3>اشتراک‌گذاری</h3>
+                    <button class="share-close" aria-label="بستن">✕</button>
+                </div>
+                <div class="share-grid">
+                    ${networks.map(n => `
+                        <a class="share-item" data-ch="${n.key}" href="${n.href}"
+                           target="_blank" rel="noopener noreferrer">
+                            <span class="share-ico">${n.icon}</span>
+                            <span class="share-name">${n.name}</span>
+                        </a>`).join('')}
+                </div>
+                <div class="share-copy-row">
+                    <input type="text" id="shareUrlInput" value="${this.esc(url)}" readonly>
+                    <button id="shareCopyBtn" class="share-copy-btn">کپی لینک</button>
+                </div>
+            </div>`;
+        document.body.appendChild(sheet);
+
+        sheet.querySelector('.share-close').addEventListener('click', () => sheet.remove());
+        sheet.addEventListener('click', (e) => { if (e.target === sheet) sheet.remove(); });
+
+        sheet.querySelectorAll('.share-item').forEach(a => {
+            a.addEventListener('click', () => {
+                this.recordShare(op.id, a.dataset.ch);
+                setTimeout(() => sheet.remove(), 300);
+            });
+        });
+
+        sheet.querySelector('#shareCopyBtn').addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(url);
+            } catch (e) {
+                // مرورگرهای قدیمی یا اتصال غیر HTTPS
+                const input = document.getElementById('shareUrlInput');
+                input.select(); document.execCommand('copy');
+            }
+            this.recordShare(op.id, 'copy');
+            this.toast('لینک کپی شد ✅');
+            sheet.remove();
+        });
+    },
+
+    recordShare(operationId, channel) {
+        const headers = { 'Content-Type': 'application/json' };
+        if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
+        // آمار اشتراک‌گذاری اهمیت درجه دو دارد؛ خطایش نباید دیده شود
+        fetch(`${API_BASE}/operations/${operationId}/share`, {
+            method: 'POST', headers, body: JSON.stringify({ channel })
+        }).catch(() => {});
+    },
 
     // ── پاپ‌آپ خوش‌آمدگویی برای بازدیدکنندهٔ تازه‌وارد ────────────
     maybeShowWelcome() {
@@ -316,10 +464,35 @@ const app = {
     async openModal(op) {
         this.currentOperation = op;
 
+        const isFav = this.myFavorites.includes(op.id);
+        const isMark = this.myBookmarks.includes(op.id);
+        const byline = op.author_name
+            ? `<span class="op-byline">✍️ ${this.esc(op.author_name)}</span>` : '';
+        const dateline = op.published_at
+            ? `<span class="op-byline">📅 ${Jalali.format(op.published_at, 'long')}</span>` : '';
+
         document.getElementById('modalHeader').innerHTML = `
-            <h2>${op.name}</h2>
-            <p>${this.currentCategory.icon} ${this.currentCategory.name_fa} — شماره ${op.op_number}</p>
+            <h2>${this.esc(op.name)}</h2>
+            <p>${this.currentCategory.icon} ${this.esc(this.currentCategory.name_fa)} — شماره ${this.esc(op.op_number)}</p>
+            <div class="op-meta-row">${byline}${dateline}</div>
+            <div class="op-actions">
+                <button class="op-act ${isFav ? 'active' : ''}" id="btnFav" title="علاقه‌مندی">
+                    <span class="op-act-ico">${isFav ? '❤️' : '🤍'}</span>
+                    <span id="btnFavText">${isFav ? 'در علاقه‌مندی‌ها' : 'علاقه‌مندی'}</span>
+                </button>
+                <button class="op-act ${isMark ? 'active' : ''}" id="btnMark" title="نشان کردن">
+                    <span class="op-act-ico">${isMark ? '🔖' : '📑'}</span>
+                    <span id="btnMarkText">${isMark ? 'نشان‌شده' : 'نشان کردن'}</span>
+                </button>
+                <button class="op-act" id="btnShare" title="اشتراک‌گذاری">
+                    <span class="op-act-ico">📤</span> اشتراک‌گذاری
+                </button>
+            </div>
         `;
+
+        document.getElementById('btnFav').addEventListener('click', () => this.toggleItem(op, 'favorite'));
+        document.getElementById('btnMark').addEventListener('click', () => this.toggleItem(op, 'bookmark'));
+        document.getElementById('btnShare').addEventListener('click', () => this.openShare(op));
 
         this.renderDescription(op.description);
         this.renderInstruments(op.instruments);
