@@ -7,6 +7,18 @@ const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 const db = require('./database');
+
+function autoSeed() {
+    const catCount = db.prepare('SELECT COUNT(*) as c FROM categories').get().c;
+    if (catCount === 0) {
+        console.log('Database empty, running auto-seed...');
+        require('./seed');
+        require('./seed-content');
+        console.log('Auto-seed completed!');
+    }
+}
+autoSeed();
+
 const apiRoutes = require('./routes/api');
 
 const app = express();
