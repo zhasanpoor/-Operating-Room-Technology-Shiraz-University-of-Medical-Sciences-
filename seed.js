@@ -245,7 +245,12 @@ function seed() {
     console.log('Database seeded successfully!');
 
     if (generated) {
+        // نشانهٔ انگلیسی عمدی: جستجوی متن فارسی در نمایشگر لاگ Render دشوار است.
+        // کاربر فقط کافی است «ADMIN_PASSWORD» را سرچ کند.
         console.log('\n' + '='.repeat(64));
+        console.log('  ADMIN_PASSWORD (generated) >>> ' + adminPassword + ' <<<');
+        console.log('  username: admin');
+        console.log('');
         console.log('  حساب مدیر ساخته شد — نام کاربری: admin');
         console.log('  رمز عبور تصادفی: ' + adminPassword);
         console.log('');
