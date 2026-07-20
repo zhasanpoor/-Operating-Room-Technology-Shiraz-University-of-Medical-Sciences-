@@ -422,16 +422,33 @@ const app = {
         }
     },
 
-    getYouTubeEmbed(url) {
+    // ویدیو را به نشانی embed تبدیل می‌کند — یوتیوب، آپارات و ویمئو.
+    // باید با سفیدفهرست سرور در lib/sanitize.js هماهنگ بماند.
+    getYouTubeEmbed(url) { return this.getVideoEmbed(url); },
+
+    getVideoEmbed(url) {
         if (!url) return null;
-        const patterns = [
-            /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\s?]+)/,
-            /youtube\.com\/shorts\/([^&\s?]+)/
-        ];
-        for (const pattern of patterns) {
-            const match = url.match(pattern);
-            if (match) return `https://www.youtube.com/embed/${match[1]}`;
+        let parsed;
+        try { parsed = new URL(url.trim()); } catch (e) { return null; }
+        const host = parsed.hostname.toLowerCase();
+
+        // یوتیوب — نسخهٔ nocookie برای حریم خصوصی بهتر
+        const yt = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([\w-]{11})/)
+                 || url.match(/youtube\.com\/shorts\/([\w-]{11})/);
+        if (yt) return `https://www.youtube-nocookie.com/embed/${yt[1]}`;
+
+        // آپارات
+        if (host.endsWith('aparat.com')) {
+            const m = parsed.pathname.match(/\/v\/([\w-]+)/);
+            if (m) return `https://www.aparat.com/video/video/embed/videohash/${m[1]}/vt/frame`;
         }
+
+        // ویمئو
+        if (host.endsWith('vimeo.com')) {
+            const m = parsed.pathname.match(/(\d{6,})/);
+            if (m) return `https://player.vimeo.com/video/${m[1]}`;
+        }
+
         return null;
     },
 

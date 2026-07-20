@@ -54,13 +54,33 @@ async function main() {
         res.sendFile(path.join(__dirname, 'admin', 'index.html'));
     });
 
+    // مسیر API که پیدا نشد باید JSON برگرداند، نه صفحهٔ HTML.
+    // قبلاً به app.get('*') می‌رسید و index.html را می‌فرستاد که کلاینت
+    // را گیج می‌کرد (پاسخ HTML به‌جای خطای ۴۰۴).
+    app.use('/api', (req, res) => {
+        res.status(404).json({ error: 'این آدرس API وجود ندارد.' });
+    });
+
+    // بقیهٔ مسیرها اپلیکیشن تک‌صفحه‌ای را می‌گیرند؛ مسیرهای واقعاً ناموجود
+    // در سمت کلاینت مدیریت می‌شوند. صفحهٔ ۴۰۴ اختصاصی برای درخواست‌های
+    // مستقیمِ فایل‌مانند (مثلاً /chart.png) که وجود ندارند.
     app.get('*', (req, res) => {
+        const looksLikeFile = path.extname(req.path);
+        if (looksLikeFile) {
+            return res.status(404).sendFile(path.join(__dirname, 'public', '404.html'));
+        }
         res.sendFile(path.join(__dirname, 'public', 'index.html'));
     });
 
+    // مدیریت خطای نهایی — پاسخ متناسب با نوع درخواست
     app.use((err, req, res, next) => {
-        console.error(err.stack);
-        res.status(500).json({ error: 'خطای سرور' });
+        console.error('خطای مدیریت‌نشده:', err && (err.stack || err.message || err));
+        const wantsJson = req.path.startsWith('/api')
+            || (req.headers.accept || '').includes('application/json');
+        if (wantsJson) {
+            return res.status(500).json({ error: 'خطای سرور. کمی بعد دوباره تلاش کنید.' });
+        }
+        res.status(500).sendFile(path.join(__dirname, 'public', '500.html'));
     });
 
     app.listen(PORT, () => {
