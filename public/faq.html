@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>سؤالات متداول | تکنولوژی اتاق عمل</title>
+    <meta name="description" content="پاسخ سؤالات پرتکرار دربارهٔ ثبت‌نام، نویسندگی، محتوا و امنیت سایت تکنولوژی اتاق عمل.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/pages.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏥</text></svg>">
+</head>
+<body>
+    <div class="bg-animation">
+        <div class="bg-orb bg-orb-1"></div>
+        <div class="bg-orb bg-orb-2"></div>
+    </div>
+
+    <header class="page-header">
+        <div class="container">
+            <a href="/" class="back-home">‹ بازگشت به سایت</a>
+            <h1>❓ سؤالات متداول</h1>
+            <p>جواب چیزهایی که بیشتر از همه پرسیده می‌شود</p>
+        </div>
+    </header>
+
+    <main class="container page-main">
+        <div class="faq-search-wrap">
+            <input type="text" id="faqSearch" class="faq-search" placeholder="🔎 در سؤالات جستجو کن...">
+        </div>
+
+        <div class="faq-cats" id="faqCats">
+            <button class="faq-cat active" data-cat="all">همه</button>
+            <button class="faq-cat" data-cat="general">عمومی</button>
+            <button class="faq-cat" data-cat="account">حساب کاربری</button>
+            <button class="faq-cat" data-cat="author">نویسندگی</button>
+            <button class="faq-cat" data-cat="security">امنیت و حریم خصوصی</button>
+        </div>
+
+        <div class="faq-list" id="faqList">
+
+            <details class="faq-item" data-cat="general">
+                <summary>استفاده از سایت رایگان است؟</summary>
+                <div class="faq-a">بله، کاملاً رایگان. برای دیدن محتوا حتی نیازی به ثبت‌نام هم نیست.</div>
+            </details>
+
+            <details class="faq-item" data-cat="general">
+                <summary>محتوای سایت از کجا می‌آید و معتبر است؟</summary>
+                <div class="faq-a">
+                    محتوا توسط مدیران و نویسندگان تأییدشده نوشته می‌شود. هر مطلبی که
+                    نویسنده می‌نویسد، قبل از انتشار توسط مدیر بررسی و تأیید می‌شود.
+                    نام نویسنده و تاریخ انتشار روی هر مطلب دیده می‌شود.
+                    <br><br>
+                    <strong>توجه:</strong> این سایت جنبهٔ آموزشی دارد و جایگزین منابع
+                    رسمی درسی یا دستورالعمل‌های بیمارستان شما نیست.
+                </div>
+            </details>
+
+            <details class="faq-item" data-cat="general">
+                <summary>چرا بعضی عمل‌ها هنوز محتوا ندارند؟</summary>
+                <div class="faq-a">
+                    فهرست عمل‌ها کامل است ولی محتوای همه هنوز نوشته نشده. کم‌کم
+                    توسط نویسندگان تکمیل می‌شود. اگر دوست داری کمک کنی، درخواست
+                    نویسندگی بده!
+                </div>
+            </details>
+
+            <details class="faq-item" data-cat="general">
+                <summary>با موبایل هم می‌توانم استفاده کنم؟</summary>
+                <div class="faq-a">
+                    بله. سایت روی موبایل، تبلت و کامپیوتر کار می‌کند. روی گوشی،
+                    دکمهٔ اشتراک‌گذاری از منوی خود گوشی استفاده می‌کند.
+                </div>
+            </details>
+
+            <details class="faq-item" data-cat="account">
+                <summary>چطور ثبت‌نام کنم؟</summary>
+                <div class="faq-a">
+                    روی دکمهٔ «ورود / ثبت‌نام» بالای صفحه بزن، زبانهٔ «ثبت‌نام» را
+                    انتخاب کن و نام، نام کاربری و رمز عبور را وارد کن. ایمیل اختیاری است.
+                </div>
+            </details>
+
+            <details class="faq-item" data-cat="account">
+                <summary>رمزم را فراموش کرده‌ام، چه کار کنم؟</summary>
+                <div class="faq-a">
+                    فعلاً بازیابی خودکار رمز فعال نیست. با مدیر سایت تماس بگیر تا
+                    رمزت را بازنشانی کند. (این قابلیت در نسخه‌های بعدی اضافه می‌شود.)
+                </div>
+            </details>
+
+            <details class="faq-item" data-cat="account">
+                <summary>چطور عکس پروفایلم را عوض کنم؟</summary>
+                <div class="faq-a">
+                    روی نام خودت در بالای صفحه کلیک کن تا پروفایل باز شود، بعد روی
+                    آیکون 📷 کنار عکس بزن. فرمت‌های JPG، PNG و WebP تا ۲ مگابایت قبول می‌شود.
+                </div>
+            </details>
+
+            <details class="faq-item" data-cat="account">
+                <summary>علاقه‌مندی و نشان کردن چه فرقی دارند؟</summary>
+                <div class="faq-a">
+                    <strong>❤️ علاقه‌مندی</strong> برای مطالبی است که دوستشان داری و می‌خواهی
+                    همیشه دم دستت باشند. <strong>🔖 نشان کردن</strong> بیشتر برای مطالبی است
+                    که می‌خواهی بعداً بخوانی — مثل نشانک گذاشتن لای کتاب.
+                </div>
+            </details>
+
+            <details class="faq-item" data-cat="author">
+                <summary>چطور نویسنده شوم؟</summary>
+                <div class="faq-a">
+                    اول ثبت‌نام کن. بعد از پروفایلت زبانهٔ «نویسنده شدن» را باز کن و
+                    درخواست بده. می‌توانی توضیح کوتاهی هم بنویسی که چرا می‌خواهی
+                    نویسنده شوی. مدیر بررسی می‌کند و نتیجه را با اعلان می‌فرستیم.
+                </div>
+            </details>
+
+            <details class="faq-item" data-cat="author">
+                <summary>بعد از تأیید پستم، می‌توانم ویرایشش کنم؟</summary>
+                <div class="faq-a">
+                    نه. پس از تأیید، پست <strong>قفل</strong> می‌شود و هیچ‌کس — حتی خود
+                    نویسنده — نمی‌تواند تغییرش دهد. این برای حفظ اعتبار محتوای
+                    تأییدشده است. اگر اشتباهی هست، به مدیر بگو تا قفل را باز کند.
+                </div>
+            </details>
+
+            <details class="faq-item" data-cat="author">
+                <summary>پستم رد شد. حالا چه کار کنم؟</summary>
+                <div class="faq-a">
+                    نگران نباش! مدیر معمولاً توضیح می‌دهد چرا. آن نظر را در بخش
+                    گفتگوی همان پست می‌بینی. اگر «نیاز به اصلاح» خورده، می‌توانی
+                    اصلاحش کنی و دوباره بفرستی.
+                </div>
+            </details>
+
+            <details class="faq-item" data-cat="author">
+                <summary>سطح‌ها و امتیازها چطور کار می‌کنند؟</summary>
+                <div class="faq-a">
+                    هر پست تأییدشده ۱۰ امتیاز دارد. سطح‌ها بر اساس تعداد پست تأییدشده‌اند:
+                    🥉 برنزی از ۱ پست، 🥈 نقره‌ای از ۵، 🥇 طلایی از ۱۵، و 💎 الماسی از ۳۰ پست.
+                    رتبهٔ خودت را در جدول رتبه‌بندی داشبورد می‌بینی.
+                </div>
+            </details>
+
+            <details class="faq-item" data-cat="author">
+                <summary>می‌توانم عکس داخل متن بگذارم؟</summary>
+                <div class="faq-a">
+                    بله. در ویرایشگر، دکمهٔ 🖼️ روی نوار ابزار را بزن و عکس را انتخاب کن.
+                    عکس آپلود و همان‌جا داخل متن درج می‌شود.
+                </div>
+            </details>
+
+            <details class="faq-item" data-cat="security">
+                <summary>رمز عبورم چطور نگهداری می‌شود؟</summary>
+                <div class="faq-a">
+                    رمز شما <strong>هرگز</strong> به‌صورت متن ساده ذخیره نمی‌شود. با الگوریتم
+                    bcrypt هش می‌شود که یک‌طرفه است — یعنی حتی مدیر سایت هم نمی‌تواند
+                    رمز شما را ببیند.
+                </div>
+            </details>
+
+            <details class="faq-item" data-cat="security">
+                <summary>چرا بعد از چند بار اشتباه، ورودم بسته شد؟</summary>
+                <div class="faq-a">
+                    این محافظت در برابر حدس زدن رمز است. بعد از ۳ تلاش ناموفق یک
+                    سؤال ساده پرسیده می‌شود و بعد از ۵ تلاش، ورود برای ۱۵ دقیقه بسته
+                    می‌شود. کافی است صبر کنی و دوباره امتحان کنی.
+                </div>
+            </details>
+
+            <details class="faq-item" data-cat="security">
+                <summary>چه اطلاعاتی از من ذخیره می‌شود؟</summary>
+                <div class="faq-a">
+                    فقط چیزهایی که خودت وارد می‌کنی (نام، نام کاربری، ایمیل اختیاری،
+                    بیو، عکس) و فعالیتت در سایت (پست‌ها، علاقه‌مندی‌ها). آمار بازدید
+                    به‌صورت ناشناس نگهداری می‌شود.
+                </div>
+            </details>
+
+            <details class="faq-item" data-cat="security">
+                <summary>لینک‌های ویدیویی که می‌گذارم محدودیت دارد؟</summary>
+                <div class="faq-a">
+                    بله، فقط لینک یوتیوب، آپارات و ویمئو پذیرفته می‌شود. این برای
+                    امنیت است — جلوی درج لینک‌های مخرب گرفته می‌شود.
+                </div>
+            </details>
+
+        </div>
+
+        <div class="faq-empty hidden" id="faqEmpty">
+            <div class="empty-emoji">🤔</div>
+            <p>سؤالی با این عبارت پیدا نشد.</p>
+        </div>
+
+        <div class="page-cta">
+            <p>هنوز جواب نگرفتی؟</p>
+            <a href="/help" class="cta-btn">راهنمای کامل را بخوان ›</a>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-links">
+                <a href="/" class="footer-link">صفحهٔ اصلی</a>
+                <a href="/help" class="footer-link">راهنما</a>
+                <a href="/sitemap" class="footer-link">نقشهٔ سایت</a>
+            </div>
+            <p>تکنولوژی اتاق عمل — ویژه دانشجویان و متخصصین علوم پزشکی</p>
+        </div>
+    </footer>
+
+    <script src="/js/faq.js"></script>
+</body>
+</html>

@@ -164,6 +164,19 @@ async function main() {
         }
     });
 
+    // صفحات ایستا — بدون این، catch-all پایین اپلیکیشن تک‌صفحه‌ای را
+    // سرو می‌کرد و این صفحات هرگز دیده نمی‌شدند.
+    const STATIC_PAGES = {
+        '/help': 'help.html',
+        '/faq': 'faq.html',
+        '/sitemap': 'sitemap.html'
+    };
+    for (const [route, file] of Object.entries(STATIC_PAGES)) {
+        app.get(route, (req, res) => {
+            res.sendFile(path.join(__dirname, 'public', file));
+        });
+    }
+
     // مسیر API که پیدا نشد باید JSON برگرداند، نه صفحهٔ HTML.
     // قبلاً به app.get('*') می‌رسید و index.html را می‌فرستاد که کلاینت
     // را گیج می‌کرد (پاسخ HTML به‌جای خطای ۴۰۴).
