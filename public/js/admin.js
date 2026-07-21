@@ -8,8 +8,30 @@ let allCategories=[];
 let descEditor=null;
 let instrEditor=null;
 
-async function api(url,options={}){const headers={'Content-Type':'application/json',...options.headers};if(token)headers['Authorization']=`Bearer ${token}`;const res=await fetch(API+url,{...options,headers});if(res.status===401){logout();throw new Error('Unauthorized')}return res.json()}
-function showPage(page){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.getElementById(`page-${page}`)?.classList.add('active');document.querySelectorAll('.nav-item[data-page]').forEach(n=>n.classList.remove('active'));document.querySelector(`[data-page="${page}"]`)?.classList.add('active');document.getElementById('breadcrumb').textContent={dashboard:'داشبورد',content:'مدیریت محتوا',review:'صف بررسی',users:'مدیریت کاربران',files:'مدیریت فایل‌ها'}[page]||page;closeSidebar()}
+/**
+ * فراخوانی API.
+ *
+ * روی پاسخ ناموفق **خطا پرتاب می‌کند** تا بلوک‌های try/catch واقعاً کار
+ * کنند. نسخهٔ قبلی فقط روی ۴۰۱ خطا می‌داد و بقیهٔ خطاها (۴۰۰، ۴۰۳، ۴۰۹…)
+ * را بی‌صدا برمی‌گرداند؛ نتیجه‌اش این بود که کد فراخوان فکر می‌کرد
+ * عملیات موفق بوده و پیام «undefined» به کاربر نشان می‌داد.
+ */
+async function api(url,options={}){
+  const headers={'Content-Type':'application/json',...options.headers};
+  if(token)headers['Authorization']=`Bearer ${token}`;
+  const res=await fetch(API+url,{...options,headers});
+  if(res.status===401){logout();throw new Error('نشستت منقضی شده. دوباره وارد شو.')}
+  let data=null;
+  try{data=await res.json()}catch(e){data=null}
+  if(!res.ok){
+    const err=new Error((data&&data.error)||'درخواست ناموفق بود.');
+    err.status=res.status;
+    err.data=data;
+    throw err;
+  }
+  return data;
+}
+function showPage(page){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.getElementById(`page-${page}`)?.classList.add('active');document.querySelectorAll('.nav-item[data-page]').forEach(n=>n.classList.remove('active'));document.querySelector(`[data-page="${page}"]`)?.classList.add('active');document.getElementById('breadcrumb').textContent={dashboard:'داشبورد',content:'مدیریت محتوا',review:'صف بررسی',settings:'تنظیمات سایت',reports:'گزارش‌ها',categories:'دسته‌بندی‌ها',users:'مدیریت کاربران',files:'مدیریت فایل‌ها'}[page]||page;closeSidebar()}
 function closeModal(id){document.getElementById(id)?.classList.add('hidden')}
 function openModal(id){document.getElementById(id)?.classList.remove('hidden')}
 function closeSidebar(){document.getElementById('sidebar')?.classList.remove('open');document.getElementById('sidebarOverlay')?.classList.remove('active')}
@@ -118,6 +140,217 @@ function renderAdminDashboard(data){
       </div>
       <div class="activity-time">${Jalali.relative(a.created_at)}</div>
     </div>`).join(''):'<p class="muted">هنوز فعالیتی ثبت نشده.</p>';
+}
+
+// ── گزارش‌ها و آمار ────────────────────────────────────────────────
+let reportDays=30;
+
+async function loadReports(days){
+  if(days)reportDays=days;
+  document.querySelectorAll('.range-btn').forEach(b=>
+    b.classList.toggle('active',Number(b.dataset.days)===reportDays));
+
+  try{
+    const r=await api(`/reports?days=${reportDays}`);
+
+    // کارت‌های خلاصه
+    const t=r.totals||{};
+    document.getElementById('reportTotals').innerHTML=[
+      {v:t.views,l:'بازدید',icon:'👁️',c:'#3b82f6'},
+      {v:t.visitors,l:'بازدیدکنندهٔ یکتا',icon:'🧑‍💻',c:'#10b981'},
+      {v:t.logged_in_users,l:'کاربر واردشده',icon:'🔑',c:'#8b5cf6'}
+    ].map(c=>`
+      <div class="stat-card">
+        <div class="stat-ico" style="background:${c.c}1a;color:${c.c}">${c.icon}</div>
+        <div class="stat-body">
+          <div class="stat-card-value" data-count="${c.v||0}">۰</div>
+          <div class="stat-card-label">${c.l}</div>
+        </div>
+      </div>`).join('');
+    document.querySelectorAll('#reportTotals [data-count]').forEach(el=>animateCount(el,el.dataset.count));
+
+    renderLineChart('reportDaily',r.daily||[],'day','views');
+    renderHourChart('reportHourly',r.hourly||[]);
+    renderBars('reportDevices',(r.byDevice||[]).map(d=>({
+      label:{mobile:'📱 موبایل',tablet:'📲 تبلت',desktop:'💻 دسکتاپ'}[d.device]||d.device,
+      count:d.count})));
+    renderBars('reportBrowsers',(r.byBrowser||[]).map(b=>({label:b.browser,count:b.count})));
+
+    const top=r.topOperations||[];
+    document.getElementById('reportTopOps').innerHTML=top.length?top.map((o,i)=>`
+      <div class="q-row">
+        <span class="q-rank">${fa(i+1)}</span>
+        <span class="q-body"><span class="q-name">${esc(o.name)}</span></span>
+        <span class="q-count">👁️ ${fa(o.views)}</span>
+      </div>`).join(''):'<p class="muted">هنوز بازدیدی ثبت نشده.</p>';
+
+    loadSecurityEvents();
+    loadAuditLog();
+  }catch(e){
+    document.getElementById('reportTotals').innerHTML='<p class="muted">خواندن گزارش ناموفق بود.</p>';
+  }
+}
+
+// نمودار خطی ساده با SVG — بدون کتابخانهٔ خارجی
+function renderLineChart(elId,rows,xKey,yKey){
+  const el=document.getElementById(elId);
+  if(!rows.length){el.innerHTML='<p class="muted">داده‌ای نیست.</p>';return}
+  const vals=rows.map(r=>r[yKey]);
+  const max=Math.max(1,...vals);
+  const W=100,H=40;
+  const pts=rows.map((r,i)=>{
+    const x=rows.length===1?W/2:(i/(rows.length-1))*W;
+    const y=H-(r[yKey]/max)*H;
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(' ');
+  const area=`0,${H} ${pts} ${W},${H}`;
+  el.innerHTML=`
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="line-chart">
+      <polygon points="${area}" fill="url(#g1)" opacity=".25"></polygon>
+      <polyline points="${pts}" fill="none" stroke="#6366f1" stroke-width="1.2"
+                vector-effect="non-scaling-stroke"></polyline>
+      <defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="transparent"/>
+      </linearGradient></defs>
+    </svg>
+    <div class="chart-legend">
+      <span>${Jalali.format(rows[0][xKey],'short')}</span>
+      <span>بیشترین: ${fa(max)}</span>
+      <span>${Jalali.format(rows[rows.length-1][xKey],'short')}</span>
+    </div>`;
+}
+
+// نمودار ۲۴ ساعته
+function renderHourChart(elId,rows){
+  const el=document.getElementById(elId);
+  const byHour=new Array(24).fill(0);
+  rows.forEach(r=>{byHour[r.hour]=r.count});
+  const max=Math.max(1,...byHour);
+  el.innerHTML=`<div class="hour-chart">${byHour.map((c,h)=>`
+    <div class="hour-col" title="ساعت ${h}: ${c} بازدید">
+      <div class="hour-bar" style="height:${(c/max*100).toFixed(1)}%"></div>
+      ${h%6===0?`<span class="hour-label">${fa(h)}</span>`:''}
+    </div>`).join('')}</div>`;
+}
+
+function renderBars(elId,items){
+  const el=document.getElementById(elId);
+  if(!items.length){el.innerHTML='<p class="muted">داده‌ای نیست.</p>';return}
+  const max=Math.max(...items.map(i=>i.count));
+  el.innerHTML=items.map(i=>`
+    <div class="bar-row">
+      <div class="bar-label">${esc(i.label)}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:0;background:#6366f1" data-w="${(i.count/max*100).toFixed(1)}"></div></div>
+      <div class="bar-value">${fa(i.count)}</div>
+    </div>`).join('');
+  requestAnimationFrame(()=>el.querySelectorAll('.bar-fill').forEach(b=>b.style.width=b.dataset.w+'%'));
+}
+
+const SEVERITY_FA={high:'بحرانی',medium:'متوسط',low:'کم'};
+const EVENT_FA={xss:'تلاش XSS',sqli:'تلاش تزریق SQL',path_traversal:'پیمایش مسیر',
+  command_injection:'تزریق فرمان',template_injection:'تزریق قالب',
+  prototype_pollution:'آلودگی prototype',bad_upload:'آپلود مشکوک'};
+
+async function loadSecurityEvents(){
+  const el=document.getElementById('reportSecurity');
+  try{
+    const events=await api('/security-events');
+    el.innerHTML=events.length?events.map(e=>`
+      <div class="q-row ${e.resolved?'q-dim':''}">
+        <span class="sev sev-${e.severity}">${SEVERITY_FA[e.severity]||e.severity}</span>
+        <span class="q-body">
+          <span class="q-name">${EVENT_FA[e.event_type]||esc(e.event_type)}</span>
+          <span class="q-meta">${esc(e.detail||'')} · ${esc(e.user_name||'مهمان')} · ${Jalali.relative(e.created_at)}</span>
+        </span>
+        ${e.resolved?'<span class="q-status q-muted">بسته</span>'
+          :`<button class="q-go" data-resolve="${e.id}">بستن</button>`}
+      </div>`).join(''):'<p class="muted">هیچ رویداد امنیتی ثبت نشده 👍</p>';
+    el.querySelectorAll('[data-resolve]').forEach(b=>
+      b.addEventListener('click',async()=>{
+        await api(`/security-events/${b.dataset.resolve}/resolve`,{method:'POST'});
+        toast('رویداد بسته شد');loadSecurityEvents();
+      }));
+  }catch(e){el.innerHTML='<p class="muted">خواندن ناموفق بود.</p>'}
+}
+
+const AUDIT_FA={...ACTION_FA,user_delete:'حذف کاربر',user_activate:'فعال‌سازی کاربر',
+  user_deactivate:'غیرفعال‌سازی کاربر',user_role_change:'تغییر سطح دسترسی',
+  password_change:'تغییر رمز',author_approve:'تأیید نویسندگی',author_reject:'رد نویسندگی',
+  settings_update:'تغییر تنظیمات',security_resolve:'بستن رویداد امنیتی'};
+
+async function loadAuditLog(){
+  const el=document.getElementById('reportAudit');
+  try{
+    const rows=await api('/audit-log');
+    el.innerHTML=rows.length?rows.slice(0,40).map(a=>`
+      <div class="q-row">
+        <span class="q-body">
+          <span class="q-name">${AUDIT_FA[a.action]||esc(a.action)}</span>
+          <span class="q-meta">${esc(a.user_name||'سیستم')} · ${esc(a.detail||'')}</span>
+        </span>
+        <span class="q-count">${Jalali.relative(a.created_at)}</span>
+      </div>`).join(''):'<p class="muted">لاگی ثبت نشده.</p>';
+  }catch(e){el.innerHTML='<p class="muted">خواندن ناموفق بود.</p>'}
+}
+
+// ── تنظیمات سایت ───────────────────────────────────────────────────
+async function loadSettings(){
+  const wrap=document.getElementById('settingsGroups');
+  wrap.innerHTML='<div class="loading-row"><div class="spinner"></div></div>';
+  try{
+    const groups=await api('/settings');
+    wrap.innerHTML=Object.entries(groups).map(([cat,g])=>`
+      <div class="settings-card">
+        <div class="settings-card-head"><h3>${esc(g.label)}</h3></div>
+        <div class="settings-card-body">
+          ${g.items.map(it=>renderSettingField(it)).join('')}
+        </div>
+      </div>`).join('');
+  }catch(e){
+    wrap.innerHTML='<p class="muted">خواندن تنظیمات ناموفق بود.</p>';
+  }
+}
+
+function renderSettingField(it){
+  const id='set_'+it.key;
+  if(it.type==='bool'){
+    const on=it.value==='1';
+    return `<label class="set-toggle" for="${id}">
+      <input type="checkbox" id="${id}" data-key="${it.key}" data-type="bool" ${on?'checked':''}>
+      <span class="set-switch"></span>
+      <span class="set-toggle-label">${esc(it.label)}</span>
+    </label>`;
+  }
+  if(it.type==='long'){
+    return `<div class="set-field">
+      <label for="${id}">${esc(it.label)}</label>
+      <textarea id="${id}" data-key="${it.key}" data-type="long" rows="5">${esc(it.value)}</textarea>
+    </div>`;
+  }
+  const inputType=it.type==='number'?'number':(it.type==='email'?'email':'text');
+  const limits=it.type==='number'?`min="${it.min??0}" max="${it.max??999999}"`:'';
+  return `<div class="set-field">
+    <label for="${id}">${esc(it.label)}</label>
+    <input type="${inputType}" id="${id}" data-key="${it.key}" data-type="${it.type}"
+           value="${esc(it.value)}" ${limits}>
+  </div>`;
+}
+
+async function saveSettings(e){
+  e.preventDefault();
+  const btn=document.getElementById('saveSettingsBtn');
+  btn.disabled=true;
+  const payload={};
+  document.querySelectorAll('#settingsGroups [data-key]').forEach(el=>{
+    payload[el.dataset.key]=el.dataset.type==='bool'?(el.checked?'1':'0'):el.value;
+  });
+  try{
+    const res=await api('/settings',{method:'PUT',body:JSON.stringify(payload)});
+    toast(res.message||'ذخیره شد');
+  }catch(err){
+    toast(err.message||'ذخیره نشد','error');
+  }
+  btn.disabled=false;
 }
 
 // صف تأیید مطالب و درخواست‌های نویسندگی روی داشبورد
@@ -427,15 +660,242 @@ async function saveContent(){
 }
 
 // Users
+// ── مدیریت دسته‌بندی‌ها ─────────────────────────────────────────────
+async function loadCategories(){
+  const el=document.getElementById('categoriesList');
+  el.innerHTML='<div class="loading-row"><div class="spinner"></div></div>';
+  try{
+    const cats=await api('/categories');
+    allCategories=cats;
+    el.innerHTML=cats.map(c=>`
+      <div class="cat-row" data-cat="${c.id}">
+        <span class="cat-ico" style="background:${esc(c.color)}22;border-color:${esc(c.color)}55">${c.icon||'🏥'}</span>
+        <span class="cat-body">
+          <span class="cat-name">${esc(c.name_fa)}</span>
+          <span class="cat-sub">${esc(c.name_en||'')} · کلید: ${esc(c.key)} · ${fa(c.operation_count)} عمل</span>
+        </span>
+        <span class="cat-order">ترتیب: ${fa(c.sort_order)}</span>
+        <span class="row-actions">
+          <button class="btn-icon" data-cat-up="${c.id}" title="بالا">▲</button>
+          <button class="btn-icon" data-cat-down="${c.id}" title="پایین">▼</button>
+          <button class="btn-icon" data-cat-edit="${c.id}" title="ویرایش">✏️</button>
+          <button class="btn-icon btn-icon-danger" data-cat-del="${c.id}" title="حذف">🗑️</button>
+        </span>
+      </div>`).join('')||'<p class="muted">هنوز دسته‌بندی‌ای ساخته نشده.</p>';
+
+    el.querySelectorAll('[data-cat-edit]').forEach(b=>
+      b.addEventListener('click',()=>openCategoryModal(b.dataset.catEdit)));
+    el.querySelectorAll('[data-cat-del]').forEach(b=>
+      b.addEventListener('click',()=>deleteCategory(b.dataset.catDel)));
+    el.querySelectorAll('[data-cat-up]').forEach(b=>
+      b.addEventListener('click',()=>moveCategory(b.dataset.catUp,-1)));
+    el.querySelectorAll('[data-cat-down]').forEach(b=>
+      b.addEventListener('click',()=>moveCategory(b.dataset.catDown,1)));
+  }catch(e){
+    el.innerHTML='<p class="muted">خواندن دسته‌بندی‌ها ناموفق بود.</p>';
+  }
+}
+
+function openCategoryModal(id){
+  const c=id?allCategories.find(x=>String(x.id)===String(id)):null;
+  document.getElementById('categoryModalTitle').textContent=c?'ویرایش دسته‌بندی':'دسته‌بندی جدید';
+  document.getElementById('catId').value=c?c.id:'';
+  document.getElementById('catNameFa').value=c?c.name_fa:'';
+  document.getElementById('catNameEn').value=c?(c.name_en||''):'';
+  document.getElementById('catIcon').value=c?(c.icon||'🏥'):'🏥';
+  document.getElementById('catColor').value=c?(c.color||'#3b82f6'):'#3b82f6';
+  document.getElementById('catOrder').value=c?c.sort_order:'';
+  openModal('categoryModal');
+}
+
+async function saveCategory(e){
+  e.preventDefault();
+  const id=document.getElementById('catId').value;
+  const body={
+    name_fa:document.getElementById('catNameFa').value.trim(),
+    name_en:document.getElementById('catNameEn').value.trim(),
+    icon:document.getElementById('catIcon').value.trim(),
+    color:document.getElementById('catColor').value,
+    sort_order:document.getElementById('catOrder').value===''
+      ?undefined:Number(document.getElementById('catOrder').value)
+  };
+  try{
+    const res=id
+      ? await api(`/categories/${id}`,{method:'PUT',body:JSON.stringify(body)})
+      : await api('/categories',{method:'POST',body:JSON.stringify(body)});
+    toast(res.message||'ذخیره شد');
+    closeModal('categoryModal');
+    loadCategories();
+  }catch(err){toast(err.message||'ذخیره نشد','error')}
+}
+
+async function moveCategory(id,delta){
+  const idx=allCategories.findIndex(c=>String(c.id)===String(id));
+  const swapWith=allCategories[idx+delta];
+  if(!swapWith)return;   // اول یا آخر فهرست
+  const me=allCategories[idx];
+  try{
+    await api(`/categories/${me.id}`,{method:'PUT',body:JSON.stringify({sort_order:swapWith.sort_order})});
+    await api(`/categories/${swapWith.id}`,{method:'PUT',body:JSON.stringify({sort_order:me.sort_order})});
+    loadCategories();
+  }catch(e){toast('جابه‌جایی انجام نشد','error')}
+}
+
+async function deleteCategory(id){
+  const c=allCategories.find(x=>String(x.id)===String(id));
+  if(!confirm(`دسته‌بندی «${c?.name_fa||''}» حذف شود؟`))return;
+  try{
+    const res=await api(`/categories/${id}`,{method:'DELETE'});
+    toast(res.message||'حذف شد');
+    loadCategories();
+  }catch(err){
+    // سرور وقتی دسته‌بندی عمل دارد، تأیید صریح می‌خواهد
+    const msg=err.message||'';
+    if(/عمل جراحی دارد/.test(msg)){
+      if(confirm(msg+'\n\nمطمئنی؟ این کار برگشت‌ناپذیر است.')){
+        try{
+          const res=await api(`/categories/${id}?force=1`,{method:'DELETE'});
+          toast(res.message||'حذف شد');
+          loadCategories();
+        }catch(e2){toast(e2.message||'حذف نشد','error')}
+      }
+    }else toast(msg||'حذف نشد','error');
+  }
+}
+
+const ROLE_FA={admin:'مدیر',editor:'نویسنده',user:'کاربر'};
+let allUsers=[];
+
 async function loadUsers(){
-  const users=await api('/auth/users');
-  document.getElementById('usersTableBody').innerHTML=users.map(u=>`<tr>
-    <td><div style="display:flex;align-items:center;gap:8px"><div class="user-avatar" style="width:30px;height:30px;font-size:12px;background:${u.role==='admin'?'var(--accent)':u.role==='editor'?'var(--green)':'var(--bg-5)'}">${u.full_name.charAt(0)}</div><span style="font-weight:500">${u.full_name}</span></div></td>
-    <td style="color:var(--text-2)">${u.username}</td>
-    <td><span class="badge badge-${u.role}">${u.role==='admin'?'مدیر':u.role==='editor'?'ویرایشگر':'کاربر'}</span></td>
-    <td style="color:var(--text-3);font-size:12px">${new Date(u.created_at).toLocaleDateString('fa-IR')}</td>
-    <td>${u.id!==currentUser?.id?`<button class="btn btn-sm" style="color:var(--red);border-color:var(--red-border)" onclick="deleteUser(${u.id})">حذف</button>`:'<span style="color:var(--text-3);font-size:12px">—</span>'}</td>
-  </tr>`).join('');
+  allUsers=await api('/auth/users');
+  renderUsers();
+}
+
+function renderUsers(){
+  const filter=document.getElementById('userFilter')?.value||'all';
+  const search=(document.getElementById('userSearch')?.value||'').trim().toLowerCase();
+
+  let list=allUsers;
+  if(filter==='admin'||filter==='editor'||filter==='user')list=list.filter(u=>u.role===filter);
+  else if(filter==='inactive')list=list.filter(u=>u.is_active===0);
+  else if(filter==='pending')list=list.filter(u=>u.author_request_status==='pending');
+  if(search)list=list.filter(u=>
+    (u.full_name||'').toLowerCase().includes(search)||
+    (u.username||'').toLowerCase().includes(search)||
+    (u.email||'').toLowerCase().includes(search));
+
+  const body=document.getElementById('usersTableBody');
+  if(!list.length){
+    body.innerHTML='<tr><td colspan="6"><p class="muted" style="text-align:center;padding:24px">کاربری با این فیلتر پیدا نشد.</p></td></tr>';
+    return;
+  }
+
+  body.innerHTML=list.map(u=>{
+    const isSelf=u.id===currentUser?.id;
+    const inactive=u.is_active===0;
+    const avatarBg=u.role==='admin'?'var(--accent)':u.role==='editor'?'#10b981':'var(--bg-5)';
+    return `<tr class="${inactive?'row-inactive':''}">
+      <td>
+        <div class="user-cell">
+          <div class="user-avatar-sm" style="background:${u.avatar?`center/cover url(${esc(u.avatar)})`:avatarBg}">${u.avatar?'':esc((u.full_name||'?').charAt(0))}</div>
+          <div class="user-cell-body">
+            <span class="user-cell-name">${esc(u.full_name)}${isSelf?' <span class="you-tag">(شما)</span>':''}</span>
+            <span class="user-cell-sub">${esc(u.username)}${u.email?' · '+esc(u.email):''}</span>
+          </div>
+        </div>
+      </td>
+      <td>
+        <select class="role-select" data-role-for="${u.id}" ${isSelf?'disabled':''}>
+          ${['admin','editor','user'].map(r=>
+            `<option value="${r}" ${u.role===r?'selected':''}>${ROLE_FA[r]}</option>`).join('')}
+        </select>
+      </td>
+      <td>
+        ${u.author_request_status==='pending'
+          ? '<span class="q-status q-warn">درخواست نویسندگی</span>'
+          : inactive ? '<span class="q-status q-bad">غیرفعال</span>'
+          : '<span class="q-status q-ok">فعال</span>'}
+      </td>
+      <td class="cell-num">${fa(u.post_count||0)}</td>
+      <td class="cell-date">
+        ${Jalali.format(u.created_at,'short')}
+        ${u.last_login_at?`<span class="cell-sub">آخرین ورود: ${Jalali.relative(u.last_login_at)}</span>`:''}
+      </td>
+      <td>
+        <div class="row-actions">
+          <button class="btn-icon" data-detail="${u.id}" title="جزئیات">👁️</button>
+          ${isSelf?'':`
+            <button class="btn-icon" data-toggle-active="${u.id}" data-active="${u.is_active}"
+                    title="${inactive?'فعال کردن':'غیرفعال کردن'}">${inactive?'✅':'🚫'}</button>
+            <button class="btn-icon btn-icon-danger" data-del="${u.id}" title="حذف">🗑️</button>`}
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  body.querySelectorAll('[data-role-for]').forEach(sel=>
+    sel.addEventListener('change',()=>changeUserRole(sel.dataset.roleFor,sel.value)));
+  body.querySelectorAll('[data-toggle-active]').forEach(b=>
+    b.addEventListener('click',()=>toggleUserActive(b.dataset.toggleActive,b.dataset.active==='1')));
+  body.querySelectorAll('[data-del]').forEach(b=>
+    b.addEventListener('click',()=>deleteUser(b.dataset.del)));
+  body.querySelectorAll('[data-detail]').forEach(b=>
+    b.addEventListener('click',()=>showUserDetail(b.dataset.detail)));
+}
+
+async function changeUserRole(id,role){
+  try{
+    const res=await api(`/auth/users/${id}/role`,{method:'POST',body:JSON.stringify({role})});
+    toast(res.message||'تغییر کرد');
+    loadUsers();
+  }catch(e){
+    toast(e.message||'تغییر انجام نشد','error');
+    loadUsers();  // برگرداندن مقدار قبلی در select
+  }
+}
+
+async function toggleUserActive(id,isActive){
+  let reason='';
+  if(isActive){
+    reason=prompt('دلیل غیرفعال کردن؟ (به کاربر نشان داده می‌شود، اختیاری)')||'';
+    if(reason===null)return;
+  }
+  try{
+    const res=await api(`/auth/users/${id}/active`,{method:'POST',
+      body:JSON.stringify({is_active:!isActive,reason})});
+    toast(res.message||'انجام شد');
+    loadUsers();
+  }catch(e){toast(e.message||'انجام نشد','error')}
+}
+
+function showUserDetail(id){
+  const u=allUsers.find(x=>String(x.id)===String(id));
+  if(!u)return;
+  const rows=[
+    ['نام کامل',u.full_name],['نام کاربری',u.username],['ایمیل',u.email||'—'],
+    ['سطح دسترسی',ROLE_FA[u.role]],
+    ['وضعیت',u.is_active===0?'غیرفعال':'فعال'],
+    ['تعداد پست',fa(u.post_count||0)],
+    ['تاریخ عضویت',Jalali.format(u.created_at,'full')],
+    ['آخرین ورود',u.last_login_at?Jalali.format(u.last_login_at,'datetime'):'هرگز'],
+    ['درخواست نویسندگی',{pending:'در انتظار بررسی',approved:'تأییدشده',
+      rejected:'ردشده',none:'—'}[u.author_request_status]||'—']
+  ];
+  if(u.author_request_note)rows.push(['توضیح درخواست',u.author_request_note]);
+  document.getElementById('userDetailTitle').textContent=u.full_name;
+  document.getElementById('userDetailBody').innerHTML=rows.map(([k,v])=>
+    `<div class="detail-row"><span class="detail-key">${k}</span><span class="detail-val">${esc(v)}</span></div>`).join('');
+  openModal('userDetailModal');
+}
+
+async function deleteUser(id){
+  const u=allUsers.find(x=>String(x.id)===String(id));
+  if(!confirm(`حساب «${u?.full_name||''}» حذف شود؟\n\nپست‌هایش حذف نمی‌شوند، فقط بی‌صاحب می‌مانند.`))return;
+  try{
+    const res=await api(`/auth/users/${id}`,{method:'DELETE'});
+    toast(res.message||'حذف شد');
+    loadUsers();
+  }catch(e){toast(e.message||'حذف انجام نشد','error')}
 }
 async function addUser(e){
   e.preventDefault();
@@ -516,6 +976,9 @@ document.addEventListener('DOMContentLoaded',async()=>{
       if(item.dataset.page==='dashboard')loadDashboard();
       if(item.dataset.page==='content')loadContentPanel();
       if(item.dataset.page==='review')loadReviewQueue();
+      if(item.dataset.page==='settings')loadSettings();
+      if(item.dataset.page==='reports')loadReports();
+      if(item.dataset.page==='categories')loadCategories();
       if(item.dataset.page==='users')loadUsers();
       if(item.dataset.page==='files')loadFiles()});
   });
@@ -538,7 +1001,13 @@ document.addEventListener('DOMContentLoaded',async()=>{
   initEditors();
 
   document.getElementById('saveContentBtn').addEventListener('click',saveContent);
+  document.getElementById('settingsForm')?.addEventListener('submit',saveSettings);
+  document.querySelectorAll('.range-btn').forEach(b=>b.addEventListener('click',()=>loadReports(Number(b.dataset.days))));
   document.getElementById('addUserBtn').addEventListener('click',()=>openModal('addUserModal'));
+  document.getElementById('userSearch')?.addEventListener('input',renderUsers);
+  document.getElementById('userFilter')?.addEventListener('change',renderUsers);
+  document.getElementById('addCategoryBtn')?.addEventListener('click',()=>openCategoryModal(null));
+  document.getElementById('categoryForm')?.addEventListener('submit',saveCategory);
   document.getElementById('addUserForm').addEventListener('submit',addUser);
   document.getElementById('logoutBtn').addEventListener('click',e=>{e.preventDefault();logout()});
   document.getElementById('fileInput').addEventListener('change',e=>{Array.from(e.target.files).forEach(f=>uploadFile(f));e.target.value=''});

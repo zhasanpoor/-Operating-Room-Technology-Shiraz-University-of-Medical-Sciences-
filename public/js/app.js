@@ -299,6 +299,20 @@ const app = {
         });
     },
 
+    // ثبت بازدید — بی‌صدا و بدون تأثیر بر تجربهٔ کاربر
+    trackView(operationId) {
+        const headers = { 'Content-Type': 'application/json' };
+        if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
+        fetch(`${API_BASE}/track/view`, {
+            method: 'POST', headers,
+            body: JSON.stringify({
+                operation_id: operationId || null,
+                path: location.pathname,
+                referrer: document.referrer || ''
+            })
+        }).catch(() => {});
+    },
+
     recordShare(operationId, channel) {
         const headers = { 'Content-Type': 'application/json' };
         if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
@@ -489,6 +503,8 @@ const app = {
                 </button>
             </div>
         `;
+
+        this.trackView(op.id);
 
         document.getElementById('btnFav').addEventListener('click', () => this.toggleItem(op, 'favorite'));
         document.getElementById('btnMark').addEventListener('click', () => this.toggleItem(op, 'bookmark'));
@@ -964,6 +980,11 @@ const app = {
             document.getElementById('pfName').value = p.full_name || '';
             document.getElementById('pfEmail').value = p.email || '';
             document.getElementById('pfBio').value = p.bio || '';
+            document.getElementById('pfMobile').value = p.mobile || '';
+            document.getElementById('pfUniversity').value = p.university || '';
+            document.getElementById('pfField').value = p.field_of_study || '';
+            document.getElementById('pfWorkplace').value = p.workplace || '';
+            document.getElementById('pfLevel').value = p.study_level || '';
             this.renderAuthorTab(p);
         } catch (err) {
             this.toast('خواندن پروفایل ناموفق بود', 'error');
@@ -1127,7 +1148,12 @@ const app = {
                     body: JSON.stringify({
                         full_name: document.getElementById('pfName').value.trim(),
                         email: document.getElementById('pfEmail').value.trim(),
-                        bio: document.getElementById('pfBio').value.trim()
+                        bio: document.getElementById('pfBio').value.trim(),
+                        mobile: document.getElementById('pfMobile').value.trim(),
+                        university: document.getElementById('pfUniversity').value.trim(),
+                        field_of_study: document.getElementById('pfField').value.trim(),
+                        workplace: document.getElementById('pfWorkplace').value.trim(),
+                        study_level: document.getElementById('pfLevel').value
                     })
                 });
                 const data = await res.json();

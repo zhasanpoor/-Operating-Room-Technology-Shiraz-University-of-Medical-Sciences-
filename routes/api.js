@@ -11,6 +11,10 @@ const {
     clientIp, checkLoginGate, recordAttempt, createCaptcha, verifyCaptcha,
     validatePassword, validateUsername
 } = require('../lib/auth-guard');
+const analytics = require('../lib/analytics');
+const imageProcessor = require('../lib/image-processor');
+const mailer = require('../lib/mailer');
+const rateLimit = require('express-rate-limit');
 const { uniqueSlug } = require('../lib/slug');
 
 // مقدار پیش‌فرض قبلی ('shiraz-ort-secret-key-2024') در همین مخزن عمومی
@@ -31,6 +35,39 @@ const router = express.Router();
  */
 function nz(value) {
     return value === undefined ? null : value;
+}
+
+/**
+ * خواندن یک تنظیم سایت با مقدار پیش‌فرض.
+ * تنظیمات کم‌حجم‌اند و زیاد خوانده می‌شوند، پس ۱۰ ثانیه کش می‌شوند تا
+ * هر درخواست یک کوئری اضافه نزند.
+ */
+let _settingsCache = { at: 0, map: null };
+function getSetting(key, fallback) {
+    try {
+        if (!_settingsCache.map || Date.now() - _settingsCache.at > 10000) {
+            const rows = db.prepare('SELECT key, value FROM site_settings').all();
+            _settingsCache = {
+                at: Date.now(),
+                map: Object.fromEntries(rows.map(r => [r.key, r.value]))
+            };
+        }
+        const value = _settingsCache.map[key];
+        return value === undefined || value === '' ? fallback : value;
+    } catch (err) {
+        return fallback;
+    }
+}
+
+/** تنظیم بولی — '1' یعنی روشن. */
+function settingOn(key, fallback = false) {
+    const value = getSetting(key, fallback ? '1' : '0');
+    return value === '1' || value === 1 || value === true;
+}
+
+/** پس از تغییر تنظیمات، کش باطل می‌شود. */
+function invalidateSettingsCache() {
+    _settingsCache = { at: 0, map: null };
 }
 
 /**
@@ -327,6 +364,13 @@ router.post('/auth/login', async (req, res) => {
 router.post('/auth/signup', async (req, res) => {
     const ip = clientIp(req);
     try {
+        // سیاست سایت: مدیر می‌تواند ثبت‌نام را ببندد
+        if (!settingOn('allow_signup', true)) {
+            return res.status(403).json({
+                error: 'ثبت‌نام فعلاً بسته است. بعداً دوباره سر بزن.'
+            });
+        }
+
         const { username, password, full_name, email } = req.body;
 
         const uname = validateUsername(username);
@@ -370,6 +414,18 @@ router.post('/auth/signup', async (req, res) => {
           .run(userId, 'به جمع ما خوش اومدی!',
                'حسابت ساخته شد. اگه دوست داری مطلب بنویسی، از پروفایلت درخواست نویسندگی بده.');
 
+        // اگر ایمیل داده و سیاست سایت تأیید ایمیل می‌خواهد، لینک بفرست.
+        // شکست ارسال نباید ثبت‌نام را خراب کند — کاربر بعداً از پروفایلش
+        // می‌تواند دوباره درخواست بدهد.
+        if (cleanEmail) {
+            try {
+                await issueVerification(
+                    { id: userId, email: cleanEmail, full_name: name }, req);
+            } catch (mailErr) {
+                console.error('ارسال ایمیل فعال‌سازی ناموفق:', mailErr.message);
+            }
+        }
+
         const token = jwt.sign(
             { id: userId, username: uname.value, role: 'user', full_name: name },
             JWT_SECRET, { expiresIn: JWT_EXPIRES_IN }
@@ -405,6 +461,104 @@ router.post('/auth/register', authMiddleware, requireAdmin, async (req, res) => 
         res.json({ id: result.lastInsertRowid, message: 'کاربر اضافه شد' });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+// ── تأیید ایمیل ─────────────────────────────────────────────────────
+
+/** ساخت و ارسال لینک فعال‌سازی. */
+async function issueVerification(user, req) {
+    const { token, hash } = mailer.createToken();
+    const expires = new Date(Date.now() + 24 * 3600 * 1000)
+        .toISOString().replace('T', ' ').slice(0, 19);
+
+    // توکن‌های قبلی همان کاربر باطل می‌شوند تا فقط آخرین لینک کار کند
+    db.prepare(`UPDATE email_tokens SET used_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND purpose = 'verify' AND used_at IS NULL`)
+      .run(user.id);
+
+    db.prepare(`INSERT INTO email_tokens (user_id, token_hash, purpose, expires_at)
+                VALUES (?, ?, 'verify', ?)`).run(user.id, hash, expires);
+
+    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+    const base = `${proto}://${req.get('host')}`;
+    return mailer.sendVerificationEmail(user.email, user.full_name,
+        `${base}/verify-email?token=${token}`);
+}
+
+/** تأیید ایمیل با توکن. */
+router.get('/auth/verify-email', async (req, res) => {
+    try {
+        const token = String(req.query.token || '');
+        if (!token) return res.status(400).json({ error: 'لینک نامعتبر است.' });
+
+        const row = db.prepare(`
+            SELECT et.id, et.user_id, et.expires_at, et.used_at, u.full_name, u.email
+            FROM email_tokens et JOIN users u ON et.user_id = u.id
+            WHERE et.token_hash = ? AND et.purpose = 'verify'
+        `).get(mailer.hashToken(token));
+
+        if (!row) return res.status(400).json({ error: 'این لینک معتبر نیست.' });
+        if (row.used_at) {
+            return res.status(400).json({ error: 'این لینک قبلاً استفاده شده است.' });
+        }
+        if (new Date(row.expires_at + 'Z') < new Date()) {
+            return res.status(400).json({
+                error: 'این لینک منقضی شده. از پروفایلت لینک تازه بگیر.'
+            });
+        }
+
+        db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(row.user_id);
+        db.prepare('UPDATE email_tokens SET used_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .run(row.id);
+
+        db.prepare(`INSERT INTO notifications (user_id, title, body, icon)
+                    VALUES (?, ?, ?, '✅')`)
+          .run(row.user_id, 'ایمیلت تأیید شد', 'حسابت کامل فعال شد. خوش اومدی!');
+
+        res.json({ message: 'ایمیلت تأیید شد! حالا می‌تونی وارد بشی.' });
+    } catch (err) {
+        console.error('خطا در تأیید ایمیل:', err.message);
+        res.status(500).json({ error: 'تأیید ایمیل انجام نشد.' });
+    }
+});
+
+/** ارسال دوبارهٔ لینک فعال‌سازی. */
+router.post('/auth/resend-verification', authMiddleware, async (req, res) => {
+    try {
+        const user = db.prepare(
+            'SELECT id, email, full_name, email_verified FROM users WHERE id = ?'
+        ).get(req.user.id);
+
+        if (!user.email) {
+            return res.status(400).json({ error: 'اول یک ایمیل در پروفایلت ثبت کن.' });
+        }
+        if (user.email_verified === 1) {
+            return res.status(400).json({ error: 'ایمیلت از قبل تأیید شده است.' });
+        }
+
+        // جلوگیری از اسپم: حداکثر یک ایمیل هر ۲ دقیقه
+        const recent = db.prepare(`
+            SELECT created_at FROM email_tokens
+            WHERE user_id = ? AND purpose = 'verify'
+            ORDER BY created_at DESC LIMIT 1
+        `).get(user.id);
+        if (recent && Date.now() - new Date(recent.created_at + 'Z') < 120000) {
+            return res.status(429).json({
+                error: 'همین الان یک ایمیل فرستادیم. دو دقیقه صبر کن.'
+            });
+        }
+
+        const result = await issueVerification(user, req);
+        res.json({
+            message: result.sent
+                ? 'لینک فعال‌سازی به ایمیلت فرستاده شد.'
+                : 'لینک ساخته شد؛ ارسال ایمیل هنوز روی سرور تنظیم نشده است.',
+            emailSent: result.sent
+        });
+    } catch (err) {
+        console.error('خطا در ارسال مجدد:', err.message);
+        res.status(500).json({ error: 'ارسال انجام نشد.' });
     }
 });
 
@@ -542,6 +696,8 @@ router.get('/profile', authMiddleware, (req, res) => {
         const user = db.prepare(`
             SELECT id, username, full_name, email, bio, avatar, role, points,
                    author_request_status, author_request_note, onboarded,
+                   mobile, workplace, university, field_of_study, study_level,
+                   email_verified, auth_provider,
                    last_login_at, created_at
             FROM users WHERE id = ?
         `).get(req.user.id);
@@ -581,6 +737,41 @@ router.put('/profile', authMiddleware, (req, res) => {
 
         if (bio !== undefined) {
             updates.bio = sanitizePlainText(bio).slice(0, 500);
+        }
+
+        // شمارهٔ موبایل ایران: ۰۹xxxxxxxxx یا +989xxxxxxxxx
+        if (req.body.mobile !== undefined) {
+            const raw = String(req.body.mobile)
+                .replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))  // ارقام فارسی
+                .replace(/[\s-]/g, '');
+            if (raw === '') {
+                updates.mobile = '';
+            } else {
+                const normalized = raw.replace(/^(\+98|0098|98)/, '0');
+                const withZero = normalized.startsWith('0') ? normalized : '0' + normalized;
+                if (!/^09\d{9}$/.test(withZero)) {
+                    return res.status(400).json({
+                        error: 'شمارهٔ موبایل معتبر نیست. مثال درست: ۰۹۱۲۳۴۵۶۷۸۹'
+                    });
+                }
+                updates.mobile = withZero;
+            }
+        }
+
+        // محل کار و تحصیل — متن ساده، طول محدود
+        for (const field of ['workplace', 'university', 'field_of_study']) {
+            if (req.body[field] !== undefined) {
+                updates[field] = sanitizePlainText(req.body[field]).slice(0, 120);
+            }
+        }
+
+        if (req.body.study_level !== undefined) {
+            const allowed = ['', 'کاردانی', 'کارشناسی', 'کارشناسی ارشد', 'دکتری', 'شاغل'];
+            const level = sanitizePlainText(req.body.study_level);
+            if (!allowed.includes(level)) {
+                return res.status(400).json({ error: 'مقطع تحصیلی نامعتبر است.' });
+            }
+            updates.study_level = level;
         }
 
         if (Object.keys(updates).length === 0) {
@@ -635,6 +826,11 @@ router.post('/profile/password', authMiddleware, async (req, res) => {
 /** درخواست ارتقا به نویسنده. */
 router.post('/profile/request-author', authMiddleware, (req, res) => {
     try {
+        if (!settingOn('allow_author_requests', true)) {
+            return res.status(403).json({
+                error: 'پذیرش درخواست نویسندگی فعلاً بسته است.'
+            });
+        }
         if (req.user.role !== 'user') {
             return res.status(400).json({ error: 'شما از قبل دسترسی نویسندگی دارید.' });
         }
@@ -711,7 +907,7 @@ function looksLikeImage(filePath) {
 }
 
 router.post('/profile/avatar', authMiddleware, (req, res) => {
-    avatarUpload.single('avatar')(req, res, (uploadErr) => {
+    avatarUpload.single('avatar')(req, res, async (uploadErr) => {
         if (uploadErr) {
             const tooBig = uploadErr.code === 'LIMIT_FILE_SIZE';
             return res.status(400).json({
@@ -738,6 +934,10 @@ router.post('/profile/avatar', authMiddleware, (req, res) => {
         }
 
         try {
+            // آواتار به اندازهٔ استاندارد کوچک می‌شود؛ کسی لازم نیست عکس
+            // ۴۰۰۰ پیکسلی گوشی را برای یک دایرهٔ ۷۲ پیکسلی دانلود کند.
+            await imageProcessor.optimizeImage(req.file.path, { preset: 'avatar' });
+
             const url = `/uploads/avatars/${req.file.filename}`;
 
             // عکس قبلی پاک شود تا دیسک پر نشود
@@ -856,26 +1056,102 @@ router.get('/categories/:key', optionalAuth, (req, res) => {
     }
 });
 
+/** ساخت دسته‌بندی جدید. */
+router.post('/categories', authMiddleware, requireAdmin, (req, res) => {
+    try {
+        const name_fa = sanitizePlainText(req.body.name_fa);
+        const name_en = sanitizePlainText(req.body.name_en);
+        if (!name_fa) return res.status(400).json({ error: 'نام فارسی دسته‌بندی الزامی است.' });
+
+        // کلید از نام انگلیسی ساخته می‌شود و باید در URL امن باشد
+        let key = sanitizePlainText(req.body.key || name_en || name_fa)
+            .toLowerCase().trim()
+            .replace(/[\s_]+/g, '-')
+            .replace(/[^a-z0-9-]/g, '')
+            .replace(/-{2,}/g, '-').replace(/^-|-$/g, '');
+        if (!key) key = 'cat-' + Date.now().toString().slice(-6);
+
+        const exists = db.prepare('SELECT id FROM categories WHERE key = ?').get(key);
+        if (exists) return res.status(400).json({ error: 'دسته‌بندی با این کلید وجود دارد.' });
+
+        // رنگ باید کد هگز معتبر باشد وگرنه در CSS تزریق می‌شود
+        const color = /^#[0-9a-fA-F]{6}$/.test(req.body.color || '')
+            ? req.body.color : '#3b82f6';
+        // آیکون فقط چند کاراکتر (اموجی)
+        const icon = sanitizePlainText(req.body.icon || '🏥').slice(0, 4) || '🏥';
+
+        const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM categories').get().m;
+        const result = db.prepare(`
+            INSERT INTO categories (key, name_fa, name_en, icon, color, sort_order)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `).run(key, name_fa, name_en || name_fa, icon, color,
+               parseInt(req.body.sort_order, 10) || maxOrder + 1);
+
+        writeAudit(req, 'category_create', 'category', result.lastInsertRowid, name_fa);
+        res.json({ id: result.lastInsertRowid, key, message: 'دسته‌بندی ساخته شد.' });
+    } catch (err) {
+        console.error('خطا در ساخت دسته‌بندی:', err.message);
+        res.status(500).json({ error: 'ساخت دسته‌بندی انجام نشد.' });
+    }
+});
+
 router.put('/categories/:id', authMiddleware, requireAdmin, (req, res) => {
     try {
+        const existing = db.prepare('SELECT id, name_fa FROM categories WHERE id = ?')
+                           .get(req.params.id);
+        if (!existing) return res.status(404).json({ error: 'دسته‌بندی پیدا نشد.' });
+
         const { name_fa, name_en, icon, color, sort_order } = req.body;
+
+        if (color !== undefined && color !== null && color !== ''
+            && !/^#[0-9a-fA-F]{6}$/.test(color)) {
+            return res.status(400).json({ error: 'کد رنگ معتبر نیست.' });
+        }
+
         db.prepare(`
             UPDATE categories SET name_fa = COALESCE(?, name_fa), name_en = COALESCE(?, name_en),
             icon = COALESCE(?, icon), color = COALESCE(?, color), sort_order = COALESCE(?, sort_order)
             WHERE id = ?
-        `).run(name_fa, name_en, icon, color, sort_order, req.params.id);
-        res.json({ message: 'دسته‌بندی بروزرسانی شد' });
+        `).run(
+            name_fa === undefined ? null : sanitizePlainText(name_fa),
+            name_en === undefined ? null : sanitizePlainText(name_en),
+            icon === undefined ? null : sanitizePlainText(icon).slice(0, 4),
+            color === undefined || color === '' ? null : color,
+            nz(sort_order), req.params.id
+        );
+        writeAudit(req, 'category_update', 'category', req.params.id, existing.name_fa);
+        res.json({ message: 'دسته‌بندی بروزرسانی شد.' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error('خطا در بروزرسانی دسته‌بندی:', err.message);
+        res.status(500).json({ error: 'بروزرسانی انجام نشد.' });
     }
 });
 
 router.delete('/categories/:id', authMiddleware, requireAdmin, (req, res) => {
     try {
+        const category = db.prepare('SELECT id, name_fa FROM categories WHERE id = ?')
+                           .get(req.params.id);
+        if (!category) return res.status(404).json({ error: 'دسته‌بندی پیدا نشد.' });
+
+        // حذف دسته‌بندی، تمام عمل‌هایش را هم پاک می‌کند (ON DELETE CASCADE).
+        // این برگشت‌ناپذیر است، پس بدون تأیید صریح انجام نمی‌شود.
+        const opCount = db.prepare('SELECT COUNT(*) AS c FROM operations WHERE category_id = ?')
+                          .get(req.params.id).c;
+        if (opCount > 0 && req.query.force !== '1') {
+            return res.status(409).json({
+                error: `این دسته‌بندی ${opCount} عمل جراحی دارد که همه حذف می‌شوند.`,
+                needsConfirm: true,
+                operationCount: opCount
+            });
+        }
+
         db.prepare('DELETE FROM categories WHERE id = ?').run(req.params.id);
-        res.json({ message: 'دسته‌بندی حذف شد' });
+        writeAudit(req, 'category_delete', 'category', req.params.id,
+                   `${category.name_fa} (${opCount} عمل)`);
+        res.json({ message: 'دسته‌بندی حذف شد.' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error('خطا در حذف دسته‌بندی:', err.message);
+        res.status(500).json({ error: 'حذف انجام نشد.' });
     }
 });
 
@@ -1043,6 +1319,23 @@ router.post('/operations/:id/submit', authMiddleware, requireAuthor, (req, res) 
         }
         if (operation.status === 'pending') {
             return res.status(400).json({ error: 'این پست همین الان هم در صف بررسی است.' });
+        }
+
+        // سیاست سایت: اگر مدیر «تأیید خودکار» را روشن کرده باشد، پست
+        // مستقیم منتشر می‌شود و وارد صف بررسی نمی‌شود.
+        if (settingOn('auto_approve_posts', false)) {
+            db.prepare(`UPDATE operations SET status = 'approved', is_locked = 1,
+                        submitted_at = CURRENT_TIMESTAMP, published_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(req.params.id);
+            if (operation.author_id) {
+                db.prepare('UPDATE users SET points = points + 10 WHERE id = ?')
+                  .run(operation.author_id);
+                db.prepare(`INSERT INTO notifications (user_id, title, body, icon)
+                            VALUES (?, ?, ?, '✅')`)
+                  .run(operation.author_id, 'پستت منتشر شد! 🎉',
+                       `«${operation.name}» به‌صورت خودکار تأیید و منتشر شد.`);
+            }
+            return res.json({ message: 'پستت منتشر شد! (تأیید خودکار فعاله) 🎉' });
         }
 
         db.prepare(`UPDATE operations SET status = 'pending',
@@ -1452,6 +1745,240 @@ router.get('/leaderboard', optionalAuth, (req, res) => {
     }
 });
 
+// ── آمار بازدید و رفتار ─────────────────────────────────────────────
+
+/**
+ * ثبت بازدید. کلاینت هنگام باز کردن هر عمل صدا می‌زند.
+ * محدودیت نرخ جدا دارد چون بی‌نام است و نباید راه سوءاستفاده باز کند.
+ */
+const viewLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    // شکست محدودیت نباید خطا بدهد؛ فقط ثبت نمی‌شود
+    handler: (req, res) => res.json({ ok: false })
+});
+
+router.post('/track/view', viewLimiter, optionalAuth, (req, res) => {
+    try {
+        const operationId = parseInt(req.body.operation_id, 10) || null;
+
+        analytics.recordView(db, {
+            userId: req.user ? req.user.id : null,
+            operationId,
+            path: req.body.path,
+            referrer: req.body.referrer,
+            ip: clientIp(req),
+            userAgent: req.headers['user-agent']
+        });
+
+        // شمارندهٔ بازدید خود عمل هم بالا می‌رود
+        if (operationId) {
+            db.prepare('UPDATE operations SET view_count = view_count + 1 WHERE id = ?')
+              .run(operationId);
+        }
+        res.json({ ok: true });
+    } catch (err) {
+        res.json({ ok: false });
+    }
+});
+
+/** گزارش‌های تحلیلی — فقط مدیر. */
+router.get('/reports', authMiddleware, requireAdmin, (req, res) => {
+    try {
+        const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 365);
+        res.json(analytics.buildReport(db, days));
+    } catch (err) {
+        console.error('خطا در ساخت گزارش:', err.message);
+        res.status(500).json({ error: 'ساخت گزارش ناموفق بود.' });
+    }
+});
+
+/** رویدادهای امنیتی — فقط مدیر. */
+router.get('/security-events', authMiddleware, requireAdmin, (req, res) => {
+    try {
+        const events = db.prepare(`
+            SELECT se.id, se.event_type, se.severity, se.detail, se.payload,
+                   se.resolved, se.created_at, u.full_name AS user_name
+            FROM security_events se
+            LEFT JOIN users u ON se.user_id = u.id
+            ORDER BY se.resolved ASC, se.created_at DESC LIMIT 100
+        `).all();
+        res.json(events);
+    } catch (err) {
+        res.status(500).json({ error: 'خواندن رویدادهای امنیتی ناموفق بود.' });
+    }
+});
+
+/** بستن یک رویداد امنیتی. */
+router.post('/security-events/:id/resolve', authMiddleware, requireAdmin, (req, res) => {
+    try {
+        db.prepare('UPDATE security_events SET resolved = 1 WHERE id = ?').run(req.params.id);
+        writeAudit(req, 'security_resolve', 'security_event', req.params.id, '');
+        res.json({ message: 'رویداد بسته شد.' });
+    } catch (err) {
+        res.status(500).json({ error: 'انجام نشد.' });
+    }
+});
+
+/** لاگ ممیزی — فقط مدیر. */
+router.get('/audit-log', authMiddleware, requireAdmin, (req, res) => {
+    try {
+        const rows = db.prepare(`
+            SELECT a.action, a.target_type, a.target_id, a.detail, a.created_at,
+                   u.full_name AS user_name
+            FROM audit_log a LEFT JOIN users u ON a.user_id = u.id
+            ORDER BY a.created_at DESC LIMIT 200
+        `).all();
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: 'خواندن لاگ ناموفق بود.' });
+    }
+});
+
+// ── تنظیمات سایت ────────────────────────────────────────────────────
+
+/**
+ * تعریف تنظیمات مجاز. کلید دلخواه پذیرفته نمی‌شود تا کسی نتواند
+ * جدول را با داده‌های بی‌ربط پر کند یا مقدار خطرناک تزریق کند.
+ */
+const SETTINGS_SCHEMA = {
+    site_name:                  { type: 'text',   category: 'general', label: 'نام سایت', max: 80 },
+    site_tagline:               { type: 'text',   category: 'general', label: 'شعار سایت', max: 140 },
+    contact_email:              { type: 'email',  category: 'general', label: 'ایمیل تماس' },
+    contact_phone:              { type: 'text',   category: 'general', label: 'تلفن تماس', max: 30 },
+    about_text:                 { type: 'long',   category: 'general', label: 'دربارهٔ ما', max: 2000 },
+
+    allow_signup:               { type: 'bool',   category: 'policy',  label: 'ثبت‌نام کاربران جدید باز باشد' },
+    require_email_verification: { type: 'bool',   category: 'policy',  label: 'تأیید ایمیل الزامی باشد' },
+    auto_approve_posts:         { type: 'bool',   category: 'policy',  label: 'پست نویسنده‌ها خودکار تأیید شود' },
+    allow_author_requests:      { type: 'bool',   category: 'policy',  label: 'کاربران بتوانند درخواست نویسندگی بدهند' },
+    maintenance_mode:           { type: 'bool',   category: 'policy',  label: 'حالت تعمیر سایت (فقط مدیر دسترسی دارد)' },
+
+    max_upload_mb:              { type: 'number', category: 'limits',  label: 'حداکثر حجم آپلود (مگابایت)', min: 1, max: 50 },
+    login_block_minutes:        { type: 'number', category: 'limits',  label: 'مدت بلاک پس از تلاش ناموفق (دقیقه)', min: 1, max: 1440 },
+    max_login_attempts:         { type: 'number', category: 'limits',  label: 'تعداد تلاش مجاز ورود', min: 3, max: 20 },
+
+    privacy_policy:             { type: 'long',   category: 'legal',   label: 'سیاست حریم خصوصی', max: 20000 },
+    terms_of_use:               { type: 'long',   category: 'legal',   label: 'قوانین استفاده', max: 20000 }
+};
+
+const CATEGORY_LABELS = {
+    general: 'اطلاعات عمومی',
+    policy: 'سیاست‌های سایت',
+    limits: 'محدودیت‌ها',
+    legal: 'متون حقوقی'
+};
+
+/** تنظیمات عمومی — بدون احراز هویت، فقط کلیدهای بی‌خطر. */
+router.get('/settings/public', (req, res) => {
+    try {
+        const publicKeys = ['site_name', 'site_tagline', 'contact_email',
+                            'contact_phone', 'about_text', 'allow_signup',
+                            'allow_author_requests', 'privacy_policy', 'terms_of_use'];
+        const rows = db.prepare('SELECT key, value FROM site_settings').all();
+        const out = {};
+        for (const row of rows) {
+            if (publicKeys.includes(row.key)) out[row.key] = row.value;
+        }
+        res.json(out);
+    } catch (err) {
+        res.json({});
+    }
+});
+
+/** همهٔ تنظیمات با تعریفشان — فقط مدیر. */
+router.get('/settings', authMiddleware, requireAdmin, (req, res) => {
+    try {
+        const rows = db.prepare('SELECT key, value FROM site_settings').all();
+        const values = Object.fromEntries(rows.map(r => [r.key, r.value]));
+
+        const grouped = {};
+        for (const [key, def] of Object.entries(SETTINGS_SCHEMA)) {
+            if (!grouped[def.category]) {
+                grouped[def.category] = { label: CATEGORY_LABELS[def.category], items: [] };
+            }
+            grouped[def.category].items.push({
+                key, ...def, value: values[key] !== undefined ? values[key] : ''
+            });
+        }
+        res.json(grouped);
+    } catch (err) {
+        console.error('خطا در خواندن تنظیمات:', err.message);
+        res.status(500).json({ error: 'خواندن تنظیمات ناموفق بود.' });
+    }
+});
+
+/** ذخیرهٔ تنظیمات — فقط مدیر. */
+router.put('/settings', authMiddleware, requireAdmin, (req, res) => {
+    try {
+        const incoming = req.body || {};
+        const changed = [];
+        const errors = [];
+
+        for (const [key, raw] of Object.entries(incoming)) {
+            const def = SETTINGS_SCHEMA[key];
+            if (!def) continue;   // کلید ناشناخته بی‌صدا نادیده گرفته می‌شود
+
+            let value;
+            switch (def.type) {
+                case 'bool':
+                    value = (raw === true || raw === '1' || raw === 1) ? '1' : '0';
+                    break;
+                case 'number': {
+                    const n = parseInt(raw, 10);
+                    if (Number.isNaN(n) || n < (def.min ?? 0) || n > (def.max ?? 1e9)) {
+                        errors.push(`«${def.label}» باید عددی بین ${def.min} تا ${def.max} باشد.`);
+                        continue;
+                    }
+                    value = String(n);
+                    break;
+                }
+                case 'email': {
+                    const email = sanitizePlainText(raw).toLowerCase();
+                    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+                        errors.push(`«${def.label}» ایمیل معتبری نیست.`);
+                        continue;
+                    }
+                    value = email;
+                    break;
+                }
+                case 'long':
+                    // متون حقوقی می‌توانند قالب‌بندی داشته باشند
+                    value = sanitizeRichText(raw).slice(0, def.max || 20000);
+                    break;
+                default:
+                    value = sanitizePlainText(raw).slice(0, def.max || 200);
+            }
+
+            db.prepare(`
+                INSERT INTO site_settings (key, value, category, updated_by, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_by = excluded.updated_by,
+                    updated_at = CURRENT_TIMESTAMP
+            `).run(key, value, def.category, req.user.id);
+            changed.push(def.label);
+        }
+
+        if (errors.length) {
+            return res.status(400).json({ error: errors.join(' ') });
+        }
+        if (!changed.length) {
+            return res.status(400).json({ error: 'تنظیم معتبری برای ذخیره فرستاده نشد.' });
+        }
+
+        invalidateSettingsCache();
+        writeAudit(req, 'settings_update', 'settings', null, changed.join('، '));
+        res.json({ message: `${changed.length} تنظیم ذخیره شد.` });
+    } catch (err) {
+        console.error('خطا در ذخیرهٔ تنظیمات:', err.message);
+        res.status(500).json({ error: 'ذخیرهٔ تنظیمات انجام نشد.' });
+    }
+});
+
 // ── آمار داشبورد ────────────────────────────────────────────────────
 
 /**
@@ -1711,7 +2238,7 @@ router.put('/operations/:id/content', authMiddleware, requireAuthor, (req, res) 
 router.post('/upload', authMiddleware, (req, res) => {
     // خطای multer (نوع نامجاز یا حجم زیاد) داخل همین‌جا مدیریت می‌شود تا
     // به‌جای خطای ۵۰۰ کلی، پیام فارسی روشن به کاربر برسد.
-    upload.single('file')(req, res, (uploadErr) => {
+    upload.single('file')(req, res, async (uploadErr) => {
         if (uploadErr) {
             const tooBig = uploadErr.code === 'LIMIT_FILE_SIZE';
             return res.status(400).json({
@@ -1723,16 +2250,31 @@ router.post('/upload', authMiddleware, (req, res) => {
         try {
             if (!req.file) return res.status(400).json({ error: 'فایلی ارسال نشد.' });
 
+            // تصویر پس از آپلود بهینه می‌شود: تغییر اندازه به استاندارد
+            // سایت، فشرده‌سازی، و حذف EXIF (که می‌تواند مختصات جغرافیایی
+            // محل عکس را لو بدهد).
+            let note = '';
+            let finalSize = req.file.size;
+            if (imageProcessor.isProcessableImage(req.file.mimetype)) {
+                const result = await imageProcessor.optimizeImage(req.file.path,
+                    { preset: 'content' });
+                if (result.optimized) {
+                    finalSize = result.sizeAfter;
+                    const saving = imageProcessor.describeSaving(result);
+                    if (saving) note = ' (' + saving + ')';
+                }
+            }
+
             db.prepare(`
                 INSERT INTO uploaded_files (original_name, stored_name, file_type, file_size, uploaded_by)
                 VALUES (?, ?, ?, ?, ?)
             `).run(sanitizePlainText(req.file.originalname), req.file.filename,
-                   req.file.mimetype, req.file.size, req.user.id);
+                   req.file.mimetype, finalSize, req.user.id);
 
             res.json({
                 url: `/uploads/${req.file.filename}`,
                 filename: req.file.originalname,
-                message: 'فایل آپلود شد.'
+                message: 'فایل آپلود شد.' + note
             });
         } catch (err) {
             console.error('خطا در آپلود:', err.message);

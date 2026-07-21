@@ -71,6 +71,24 @@
                     <span class="nav-badge nav-badge-alert hidden" id="reviewBadge">0</span>
                 </a>
                 <div class="nav-divider"></div>
+                <a href="#" class="nav-item admin-only" data-page="categories">
+                    <span class="nav-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                    </span>
+                    دسته‌بندی‌ها
+                </a>
+                <a href="#" class="nav-item admin-only" data-page="reports">
+                    <span class="nav-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+                    </span>
+                    گزارش‌ها
+                </a>
+                <a href="#" class="nav-item admin-only" data-page="settings">
+                    <span class="nav-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    </span>
+                    تنظیمات سایت
+                </a>
                 <a href="#" class="nav-item admin-only" data-page="users">
                     <span class="nav-icon">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
@@ -187,6 +205,83 @@
                         </div>
                         <div class="dash-card-body" id="dashLeaderboard"></div>
                     </div>
+                </div>
+
+                <!-- Categories -->
+                <div class="page" id="page-categories">
+                    <div class="page-title-row">
+                        <h2>مدیریت دسته‌بندی‌ها</h2>
+                        <p class="page-desc">افزودن، ویرایش و ترتیب دسته‌بندی عمل‌های جراحی</p>
+                    </div>
+                    <button class="btn btn-primary" id="addCategoryBtn" style="margin-bottom:16px">
+                        ➕ دسته‌بندی جدید
+                    </button>
+                    <div id="categoriesList"></div>
+                </div>
+
+                <!-- Reports -->
+                <div class="page" id="page-reports">
+                    <div class="page-title-row">
+                        <h2>گزارش‌ها و آمار</h2>
+                        <p class="page-desc">بازدید، رفتار کاربران، دستگاه‌ها و رویدادهای امنیتی</p>
+                    </div>
+                    <div class="report-range">
+                        <button class="range-btn" data-days="7">۷ روز</button>
+                        <button class="range-btn active" data-days="30">۳۰ روز</button>
+                        <button class="range-btn" data-days="90">۹۰ روز</button>
+                    </div>
+                    <div class="stats-grid" id="reportTotals"></div>
+                    <div class="dashboard-cards">
+                        <div class="dash-card">
+                            <div class="dash-card-header"><h3>📈 روند بازدید روزانه</h3></div>
+                            <div class="dash-card-body" id="reportDaily"></div>
+                        </div>
+                        <div class="dash-card">
+                            <div class="dash-card-header"><h3>🕐 ساعات پربازدید</h3></div>
+                            <div class="dash-card-body" id="reportHourly"></div>
+                        </div>
+                    </div>
+                    <div class="dashboard-cards" style="margin-top:20px">
+                        <div class="dash-card">
+                            <div class="dash-card-header"><h3>📱 دستگاه‌ها</h3></div>
+                            <div class="dash-card-body" id="reportDevices"></div>
+                        </div>
+                        <div class="dash-card">
+                            <div class="dash-card-header"><h3>🌐 مرورگرها</h3></div>
+                            <div class="dash-card-body" id="reportBrowsers"></div>
+                        </div>
+                    </div>
+                    <div class="dash-card" style="margin-top:20px">
+                        <div class="dash-card-header"><h3>🔥 پربازدیدترین مطالب</h3></div>
+                        <div class="dash-card-body" id="reportTopOps"></div>
+                    </div>
+                    <div class="dash-card" style="margin-top:20px">
+                        <div class="dash-card-header">
+                            <h3>🛡️ رویدادهای امنیتی</h3>
+                        </div>
+                        <div class="dash-card-body" id="reportSecurity"></div>
+                    </div>
+                    <div class="dash-card" style="margin-top:20px">
+                        <div class="dash-card-header"><h3>📋 لاگ ممیزی</h3></div>
+                        <div class="dash-card-body" id="reportAudit"></div>
+                    </div>
+                </div>
+
+                <!-- Site Settings -->
+                <div class="page" id="page-settings">
+                    <div class="page-title-row">
+                        <h2>تنظیمات سایت</h2>
+                        <p class="page-desc">اطلاعات عمومی، سیاست‌ها، محدودیت‌ها و متون حقوقی</p>
+                    </div>
+                    <form id="settingsForm">
+                        <div id="settingsGroups"></div>
+                        <div class="settings-actions">
+                            <button type="submit" class="btn btn-primary" id="saveSettingsBtn">
+                                ذخیرهٔ تنظیمات
+                            </button>
+                            <span class="settings-hint">تغییرات بلافاصله اعمال می‌شوند</span>
+                        </div>
+                    </form>
                 </div>
 
                 <!-- Review Queue -->
@@ -349,16 +444,29 @@
                 <div class="page" id="page-users">
                     <div class="page-title-row">
                         <h2>مدیریت کاربران</h2>
-                        <p class="page-desc">افزودن و مدیریت کاربران سیستم</p>
+                        <p class="page-desc">سطح دسترسی، فعال‌سازی و جزئیات کاربران</p>
+                    </div>
+                    <div class="user-toolbar">
+                        <input type="search" id="userSearch" class="input"
+                               placeholder="جستجوی نام، نام کاربری یا ایمیل…">
+                        <select id="userFilter" class="select-input">
+                            <option value="all">همه</option>
+                            <option value="admin">مدیران</option>
+                            <option value="editor">نویسندگان</option>
+                            <option value="user">کاربران عادی</option>
+                            <option value="pending">درخواست نویسندگی</option>
+                            <option value="inactive">غیرفعال</option>
+                        </select>
                     </div>
                     <div class="table-container">
                         <table class="data-table" id="usersTable">
                             <thead>
                                 <tr>
                                     <th>کاربر</th>
-                                    <th>نام کاربری</th>
-                                    <th>نقش</th>
-                                    <th>تاریخ ایجاد</th>
+                                    <th>سطح دسترسی</th>
+                                    <th>وضعیت</th>
+                                    <th>پست</th>
+                                    <th>عضویت</th>
                                     <th>عملیات</th>
                                 </tr>
                             </thead>
@@ -395,6 +503,57 @@
     </div>
 
     <!-- Modals -->
+    <div class="modal-overlay hidden" id="categoryModal">
+        <div class="modal modal-md">
+            <div class="modal-header">
+                <h3 id="categoryModalTitle">دسته‌بندی جدید</h3>
+                <button class="modal-close" onclick="closeModal('categoryModal')">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="categoryForm">
+                    <input type="hidden" id="catId">
+                    <div class="form-group">
+                        <label for="catNameFa">نام فارسی</label>
+                        <input type="text" id="catNameFa" class="input" placeholder="مثلاً جراحی قلب" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="catNameEn">نام انگلیسی</label>
+                        <input type="text" id="catNameEn" class="input" placeholder="Cardiac Surgery">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group flex-1">
+                            <label for="catIcon">آیکون (اموجی)</label>
+                            <input type="text" id="catIcon" class="input" placeholder="❤️" maxlength="4">
+                        </div>
+                        <div class="form-group flex-1">
+                            <label for="catColor">رنگ</label>
+                            <input type="color" id="catColor" class="input" value="#3b82f6">
+                        </div>
+                        <div class="form-group flex-1">
+                            <label for="catOrder">ترتیب</label>
+                            <input type="number" id="catOrder" class="input" min="0">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="width:100%">ذخیره</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay hidden" id="userDetailModal">
+        <div class="modal modal-md">
+            <div class="modal-header">
+                <h3 id="userDetailTitle">جزئیات کاربر</h3>
+                <button class="modal-close" onclick="closeModal('userDetailModal')">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+            <div class="modal-body" id="userDetailBody"></div>
+        </div>
+    </div>
+
     <div class="modal-overlay hidden" id="reviewPreviewModal">
         <div class="modal modal-lg">
             <div class="modal-header">
