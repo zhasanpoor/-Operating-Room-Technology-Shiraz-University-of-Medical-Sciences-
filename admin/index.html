@@ -129,6 +129,7 @@
                     <div class="breadcrumb" id="breadcrumb">داشبورد</div>
                 </div>
                 <div class="topbar-left">
+                    <button class="theme-toggle-admin" id="adminThemeToggle" title="تغییر حالت روشن/تاریک" aria-label="تغییر حالت روشن یا تاریک">🌙</button>
                     <div class="topbar-user" id="topbarUser">
                         <div class="user-avatar" id="userAvatar">A</div>
                         <div class="user-info">
@@ -333,6 +334,21 @@
                     </div>
                     <div class="content-editor hidden" id="contentEditor">
                         <div class="editor-header" id="editorHeader"></div>
+
+                        <!-- وضعیت پست و گفتگوی نویسنده با مدیر -->
+                        <div class="post-status-bar hidden" id="postStatusBar"></div>
+                        <div class="comment-box hidden" id="commentBox">
+                            <div class="comment-head">
+                                <h4>💬 گفتگو با مدیر</h4>
+                                <button type="button" class="link-btn" id="toggleComments">نمایش</button>
+                            </div>
+                            <div class="comment-list hidden" id="commentList"></div>
+                            <div class="comment-compose hidden" id="commentCompose">
+                                <textarea id="commentInput" rows="2" maxlength="2000"
+                                          placeholder="پیامت رو بنویس…"></textarea>
+                                <button type="button" class="btn btn-primary" id="sendCommentBtn">ارسال</button>
+                            </div>
+                        </div>
                         <div class="editor-tabs">
                             <button class="editor-tab active" data-tab="description">
                                 <span class="tab-icon">📝</span>

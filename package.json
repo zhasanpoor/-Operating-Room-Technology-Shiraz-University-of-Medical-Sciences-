@@ -17,6 +17,8 @@
     "test:api": "node scripts/test-content-api.js",
     "test:settings": "node scripts/test-settings.js",
     "test:profile": "node scripts/test-profile-fields.js",
+    "test:review": "node scripts/test-review-conversation.js",
+    "test:promotion": "node scripts/test-author-promotion.js",
     "test:images": "node scripts/test-image-processor.js",
     "test": "node scripts/test-jalali.js && node scripts/test-sanitize.js && node scripts/test-db-adapter.js && node scripts/test-image-processor.js"
   },

@@ -78,6 +78,12 @@ async function main() {
     // اعتماد به پراکسی Render تا req.ip واقعی باشد (برای محدودیت نرخ و بلاک IP)
     app.set('trust proxy', 1);
 
+    // محافظت CSRF — چون authMiddleware توکن را از کوکی هم می‌پذیرد و
+    // مرورگر کوکی را خودکار می‌فرستد، آن مسیر بدون این محافظت در برابر
+    // جعل درخواست بین‌سایتی باز است.
+    const { csrfProtection } = require('./lib/csrf');
+    app.use(csrfProtection({ isProduction: IS_PRODUCTION }));
+
     // محدودیت نرخ عمومی روی کل API — سپر کلی در برابر سیل درخواست.
     // محافظت اختصاصی brute-force روی لاگین جداگانه در lib/auth-guard است.
     const limiter = rateLimit({

@@ -8,6 +8,7 @@ const app = {
     token: null,
 
     async init() {
+        this.initTheme();
         this.token = localStorage.getItem('auth_token');
         if (this.token) {
             await this.checkAuth();
@@ -941,7 +942,45 @@ const app = {
 
         // پروفایل
         document.getElementById('userChip').addEventListener('click', () => this.openProfile());
+        document.getElementById('themeToggle')?.addEventListener('click', () => this.toggleTheme());
+        document.querySelectorAll('.filter-chip').forEach(chip =>
+            chip.addEventListener('click', () => this.setFilter(chip.dataset.filter)));
         this.bindProfileEvents();
+    },
+
+    // ── حالت روشن / تاریک ───────────────────────────────────────
+    initTheme() {
+        // ترتیب اولویت: انتخاب قبلی کاربر ← تنظیم سیستم‌عامل ← تاریک
+        const saved = localStorage.getItem('theme');
+        const prefersLight = window.matchMedia
+            && window.matchMedia('(prefers-color-scheme: light)').matches;
+        this.applyTheme(saved || (prefersLight ? 'light' : 'dark'));
+
+        // اگر کاربر خودش انتخابی نکرده، با تغییر تنظیم سیستم همراه شود
+        if (!saved && window.matchMedia) {
+            window.matchMedia('(prefers-color-scheme: light)')
+                .addEventListener('change', e => {
+                    if (!localStorage.getItem('theme')) {
+                        this.applyTheme(e.matches ? 'light' : 'dark');
+                    }
+                });
+        }
+    },
+
+    applyTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        const btn = document.getElementById('themeToggle');
+        if (btn) {
+            btn.textContent = theme === 'light' ? '🌙' : '☀️';
+            btn.title = theme === 'light' ? 'رفتن به حالت تاریک' : 'رفتن به حالت روشن';
+        }
+        this.theme = theme;
+    },
+
+    toggleTheme() {
+        const next = this.theme === 'light' ? 'dark' : 'light';
+        localStorage.setItem('theme', next);
+        this.applyTheme(next);
     },
 
     // ── نوتیفیکیشن toast ────────────────────────────────────────
@@ -1212,34 +1251,115 @@ const app = {
         });
     },
 
-    async handleSearch(query) {
-        query = query.trim();
+    /** حالت خالی یکدست برای همهٔ فهرست‌ها. */
+    emptyState(emoji, title, text) {
+        return `<div class="empty-result">
+            <div class="empty-result-emoji">${emoji}</div>
+            <h3>${this.esc(title)}</h3>
+            <p>${this.esc(text)}</p>
+        </div>`;
+    },
 
-        if (!query) {
+    /** نتایج جستجو را مستقیم به‌صورت فهرست عمل نشان می‌دهد. */
+    renderSearchResults(operations, grid) {
+        grid.innerHTML = operations.map(op => `
+            <div class="result-card" data-op="${op.id}">
+                <span class="result-ico" style="background:${op.category_color || '#3b82f6'}22">
+                    ${op.category_icon || '🏥'}
+                </span>
+                <div class="result-body">
+                    <div class="result-name">${this.esc(op.name)}</div>
+                    <div class="result-meta">
+                        ${this.esc(op.category_name_fa || '')} · شماره ${this.esc(op.op_number)}
+                    </div>
+                </div>
+                <div class="result-tags">
+                    ${op.description ? '<span class="rtag">📝</span>' : ''}
+                    ${(op.video_url_1 || op.video_url_2) ? '<span class="rtag">🎬</span>' : ''}
+                    ${op.slides_url ? '<span class="rtag">📊</span>' : ''}
+                </div>
+            </div>`).join('');
+
+        grid.querySelectorAll('[data-op]').forEach(card => {
+            card.addEventListener('click', async () => {
+                const op = operations.find(o => String(o.id) === card.dataset.op);
+                this.currentCategory = {
+                    icon: op.category_icon, name_fa: op.category_name_fa
+                };
+                await this.openModal(op);
+            });
+        });
+    },
+
+    activeFilter: 'all',
+
+    /** فیلتر را عوض می‌کند و جستجو را با شرایط تازه اجرا می‌کند. */
+    setFilter(filter) {
+        this.activeFilter = filter;
+        document.querySelectorAll('.filter-chip').forEach(c =>
+            c.classList.toggle('active', c.dataset.filter === filter));
+        this.handleSearch(document.getElementById('searchInput').value);
+    },
+
+    /** اسکلت بارگذاری — به‌جای صفحهٔ خالی هنگام انتظار. */
+    showSkeletons(container, count = 6) {
+        container.innerHTML = Array.from({ length: count }, () => `
+            <div class="skeleton-card">
+                <div class="skeleton skeleton-icon"></div>
+                <div class="skeleton skeleton-line" style="width:70%"></div>
+                <div class="skeleton skeleton-line" style="width:45%"></div>
+            </div>`).join('');
+    },
+
+    async handleSearch(query) {
+        query = (query || '').trim();
+        const filter = this.activeFilter;
+
+        // بدون عبارت جستجو و بدون فیلتر → نمای عادی دسته‌بندی‌ها
+        if (!query && filter === 'all') {
             document.getElementById('categoriesSection').classList.remove('hidden');
             document.getElementById('operationsSection').classList.add('hidden');
             this.renderCategories();
             return;
         }
 
+        const grid = document.getElementById('categoriesGrid');
+        document.getElementById('categoriesSection').classList.remove('hidden');
+        document.getElementById('operationsSection').classList.add('hidden');
+        this.showSkeletons(grid);
+
+        // فیلتر علاقه‌مندی‌ها سمت کلاینت اعمال می‌شود چون فهرستش را داریم
+        if (filter === 'favorites') {
+            if (!this.token) {
+                grid.innerHTML = this.emptyState('🔒', 'اول وارد شو',
+                    'برای دیدن علاقه‌مندی‌هات باید وارد حسابت بشی.');
+                return;
+            }
+            const all = await (await fetch(`${API_BASE}/operations${query
+                ? '?search=' + encodeURIComponent(query) : ''}`)).json();
+            const mine = all.filter(o => this.myFavorites.includes(o.id));
+            if (!mine.length) {
+                grid.innerHTML = this.emptyState('💔', 'چیزی پیدا نشد',
+                    'هنوز چیزی به علاقه‌مندی‌هات اضافه نکردی یا با این جستجو جور در نمیاد.');
+                return;
+            }
+            return this.renderSearchResults(mine, grid);
+        }
+
         try {
-            const res = await fetch(`${API_BASE}/operations?search=${encodeURIComponent(query)}`);
+            const params = new URLSearchParams();
+            if (query) params.set('search', query);
+            if (filter !== 'all') params.set(filter, '1');
+
+            const res = await fetch(`${API_BASE}/operations?${params}`);
             const operations = await res.json();
 
-            document.getElementById('categoriesSection').classList.remove('hidden');
-            document.getElementById('operationsSection').classList.add('hidden');
-
-            const grid = document.getElementById('categoriesGrid');
             grid.innerHTML = '';
 
             if (operations.length === 0) {
-                grid.innerHTML = `
-                    <div style="grid-column: 1/-1; text-align: center; padding: 60px 20px;">
-                        <div style="font-size: 48px; margin-bottom: 16px;">🔍</div>
-                        <h3 style="font-size: 18px; margin-bottom: 8px;">نتیجه‌ای یافت نشد</h3>
-                        <p style="color: var(--text-secondary);">عبارت جستجو را تغییر دهید.</p>
-                    </div>
-                `;
+                grid.innerHTML = this.emptyState('🔍', 'نتیجه‌ای پیدا نشد',
+                    query ? 'عبارت دیگری امتحان کن یا فیلتر را بردار.'
+                          : 'با این فیلتر چیزی موجود نیست.');
                 return;
             }
 

@@ -1177,8 +1177,33 @@ router.get('/operations', optionalAuth, (req, res) => {
         const conditions = [vis.sql];
 
         if (search) {
-            conditions.push('(o.name LIKE ? OR o.op_number LIKE ?)');
-            params.push(`%${search}%`, `%${search}%`);
+            // جستجو در نام، شماره و *متن محتوا* — قبلاً فقط نام و شماره
+            // جستجو می‌شد، پس کسی که دنبال یک ابزار یا اصطلاح داخل شرح
+            // عمل بود هیچ نتیجه‌ای نمی‌گرفت.
+            //
+            // نویسهٔ عربی «ي/ك» با فارسی «ی/ک» یکی می‌شود تا جستجو با هر
+            // صفحه‌کلیدی نتیجه بدهد.
+            const normalized = String(search)
+                .replace(/[يى]/g, 'ی').replace(/ك/g, 'ک').trim();
+            const like = `%${normalized}%`;
+            conditions.push(`(
+                REPLACE(REPLACE(o.name, 'ي', 'ی'), 'ك', 'ک') LIKE ?
+                OR o.op_number LIKE ?
+                OR REPLACE(REPLACE(oc.description, 'ي', 'ی'), 'ك', 'ک') LIKE ?
+                OR REPLACE(REPLACE(oc.instruments, 'ي', 'ی'), 'ك', 'ک') LIKE ?
+            )`);
+            params.push(like, like, like, like);
+        }
+
+        // فیلترهای پیشرفته
+        if (req.query.has_video === '1') {
+            conditions.push("(oc.video_url_1 != '' OR oc.video_url_2 != '')");
+        }
+        if (req.query.has_content === '1') {
+            conditions.push("(oc.description IS NOT NULL AND oc.description != '')");
+        }
+        if (req.query.has_slides === '1') {
+            conditions.push("(oc.slides_url IS NOT NULL AND oc.slides_url != '')");
         }
         if (category) {
             conditions.push('c.key = ?');

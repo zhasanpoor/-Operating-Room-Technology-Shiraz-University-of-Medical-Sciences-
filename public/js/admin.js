@@ -43,6 +43,28 @@ async function login(username,password){const res=await fetch(`${API}/auth/login
 function logout(){token=null;currentUser=null;localStorage.removeItem('admin_token');document.getElementById('loginPage').classList.remove('hidden');document.getElementById('adminLayout').classList.add('hidden')}
 async function checkAuth(){if(!token)return false;try{currentUser=await api('/auth/me');return true}catch{return false}}
 
+// ── حالت روشن / تاریک ──────────────────────────────────────────────
+// کلید ذخیره با سایت اصلی یکی است تا انتخاب کاربر در هر دو اعمال شود.
+function initTheme(){
+  const saved=localStorage.getItem('theme');
+  const prefersLight=window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches;
+  applyTheme(saved||(prefersLight?'light':'dark'));
+}
+function applyTheme(theme){
+  document.documentElement.setAttribute('data-theme',theme);
+  const btn=document.getElementById('adminThemeToggle');
+  if(btn){
+    btn.textContent=theme==='light'?'🌙':'☀️';
+    btn.title=theme==='light'?'رفتن به حالت تاریک':'رفتن به حالت روشن';
+  }
+  window.__theme=theme;
+}
+function toggleTheme(){
+  const next=window.__theme==='light'?'dark':'light';
+  localStorage.setItem('theme',next);
+  applyTheme(next);
+}
+
 // ── ابزارهای کوچک ──────────────────────────────────────────────────
 const fa=n=>Number(n||0).toLocaleString('fa-IR');
 function esc(s){const d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML}
@@ -615,6 +637,102 @@ async function loadOperationContent(opId){
   updateSlidesPreview();
   updateCharCounts();
   updateTabStatuses();
+  renderPostStatus(op);
+  loadComments(op.id);
+}
+
+// ── وضعیت پست و گفتگو با مدیر ──────────────────────────────────────
+function renderPostStatus(op){
+  const bar=document.getElementById('postStatusBar');
+  const isAdmin=currentUser?.role==='admin';
+  const locked=op.is_locked===1;
+
+  const styles={draft:'muted',pending:'warn',approved:'ok',
+    rejected:'bad',changes_requested:'warn'};
+  const hints={
+    draft:'این پست هنوز ارسال نشده. وقتی آماده شد برای بررسی بفرست.',
+    pending:'در صف بررسی مدیره. تا وقتی بررسی نشده می‌تونی ویرایشش کنی.',
+    approved:'تأیید و منتشر شده. برای ویرایش باید مدیر قفلش رو باز کنه.',
+    rejected:'تأیید نشد. نظر مدیر رو در گفتگو ببین.',
+    changes_requested:'مدیر خواسته اصلاحش کنی. توضیحات در گفتگوست.'
+  };
+
+  bar.classList.remove('hidden');
+  bar.innerHTML=`
+    <span class="q-status q-${styles[op.status]||'muted'}">${STATUS_FA[op.status]||op.status}</span>
+    <span class="status-hint">${hints[op.status]||''}</span>
+    <span class="status-actions">
+      ${!locked&&op.status!=='pending'
+        ? `<button class="btn btn-primary btn-sm" id="submitPostBtn">📤 ارسال برای بررسی</button>`:''}
+      ${locked&&isAdmin
+        ? `<button class="btn btn-sm" id="unlockPostBtn">🔓 باز کردن قفل</button>`:''}
+    </span>`;
+
+  document.getElementById('submitPostBtn')?.addEventListener('click',()=>submitPost(op.id));
+  document.getElementById('unlockPostBtn')?.addEventListener('click',()=>unlockPost(op.id));
+
+  // پست قفل‌شده نباید ویرایش‌پذیر به نظر برسد
+  descEditor?.enable(!locked);
+  instrEditor?.enable(!locked);
+  document.getElementById('saveContentBtn').disabled=locked;
+}
+
+async function submitPost(id){
+  if(!confirm('این پست برای بررسی مدیر ارسال شود؟'))return;
+  try{
+    const res=await api(`/operations/${id}/submit`,{method:'POST'});
+    toast(res.message||'ارسال شد');
+    loadOperationContent(id);
+  }catch(e){toast(e.message||'ارسال نشد','error')}
+}
+
+async function unlockPost(id){
+  if(!confirm('قفل این پست باز شود تا قابل ویرایش شود؟'))return;
+  try{
+    const res=await api(`/operations/${id}/unlock`,{method:'POST'});
+    toast(res.message||'قفل باز شد');
+    loadOperationContent(id);
+  }catch(e){toast(e.message||'انجام نشد','error')}
+}
+
+async function loadComments(opId){
+  const box=document.getElementById('commentBox');
+  const list=document.getElementById('commentList');
+  box.classList.remove('hidden');
+  try{
+    const comments=await api(`/operations/${opId}/comments`);
+    const btn=document.getElementById('toggleComments');
+    btn.textContent=comments.length?`نمایش (${fa(comments.length)})`:'نمایش';
+
+    list.innerHTML=comments.length?comments.map(c=>`
+      <div class="comment ${c.kind==='review'?'from-admin':'from-author'}">
+        <div class="comment-meta">
+          <span class="comment-author">${c.user_role==='admin'?'👨‍💼':'✍️'} ${esc(c.user_name)}</span>
+          <span class="comment-time">${Jalali.relative(c.created_at)}</span>
+        </div>
+        <div class="comment-body">${esc(c.body)}</div>
+      </div>`).join('')
+      :'<p class="muted" style="padding:12px">هنوز پیامی رد و بدل نشده.</p>';
+  }catch(e){
+    list.innerHTML='<p class="muted" style="padding:12px">خواندن گفتگو ناموفق بود.</p>';
+  }
+}
+
+async function sendComment(){
+  const input=document.getElementById('commentInput');
+  const body=input.value.trim();
+  if(!body){toast('پیام خالیه','error');return}
+  if(!currentContentOp)return;
+  const btn=document.getElementById('sendCommentBtn');
+  btn.disabled=true;
+  try{
+    await api(`/operations/${currentContentOp.id}/comments`,{method:'POST',
+      body:JSON.stringify({body})});
+    input.value='';
+    toast('پیامت ثبت شد');
+    loadComments(currentContentOp.id);
+  }catch(e){toast(e.message||'ارسال نشد','error')}
+  btn.disabled=false;
 }
 function setSteps(active){[1,2,3].forEach(i=>{const el=document.getElementById(`step${i}`);el.classList.remove('active','done');if(i<active)el.classList.add('done');else if(i===active)el.classList.add('active')})}
 function updateCharCounts(){
@@ -960,6 +1078,8 @@ function initEditors(){
 
 // Init
 document.addEventListener('DOMContentLoaded',async()=>{
+  initTheme();
+  document.getElementById('adminThemeToggle')?.addEventListener('click',toggleTheme);
   document.getElementById('loginForm').addEventListener('submit',async e=>{
     e.preventDefault();
     const errEl=document.getElementById('loginError');errEl.classList.add('hidden');
@@ -1002,6 +1122,13 @@ document.addEventListener('DOMContentLoaded',async()=>{
 
   document.getElementById('saveContentBtn').addEventListener('click',saveContent);
   document.getElementById('settingsForm')?.addEventListener('submit',saveSettings);
+  document.getElementById('sendCommentBtn')?.addEventListener('click',sendComment);
+  document.getElementById('toggleComments')?.addEventListener('click',()=>{
+    const l=document.getElementById('commentList'),c=document.getElementById('commentCompose');
+    const hidden=l.classList.contains('hidden');
+    l.classList.toggle('hidden',!hidden);c.classList.toggle('hidden',!hidden);
+    document.getElementById('toggleComments').textContent=hidden?'بستن':'نمایش';
+  });
   document.querySelectorAll('.range-btn').forEach(b=>b.addEventListener('click',()=>loadReports(Number(b.dataset.days))));
   document.getElementById('addUserBtn').addEventListener('click',()=>openModal('addUserModal'));
   document.getElementById('userSearch')?.addEventListener('input',renderUsers);

@@ -684,3 +684,127 @@ body{font-family:'Vazirmatn',system-ui,sans-serif;background:var(--bg);color:var
 .cat-sub{display:block;font-size:11.5px;color:var(--text-3);margin-top:3px}
 .cat-order{font-size:12px;color:var(--text-3);white-space:nowrap;flex-shrink:0}
 input[type=color].input{padding:4px;height:42px;cursor:pointer}
+
+/* ═══════════════════════════════════════════════════════════════
+   حالت روشن پنل مدیریت
+   ═══════════════════════════════════════════════════════════════ */
+:root[data-theme="light"]{
+  --bg:#eef0f6;--bg-2:#f6f7fb;--bg-3:#ffffff;--bg-4:#f1f3f9;--bg-5:#e5e8f0;
+  --text:#16181d;--text-2:#4b5563;--text-3:#717786;
+  --border:#e2e5ee;--border-2:#cfd4e2;
+  --accent:#4f46e5;--accent-2:#4338ca;--accent-bg:rgba(79,70,229,.07);--accent-border:rgba(79,70,229,.22);
+  --shadow:0 6px 24px rgba(20,24,40,.10);--shadow-sm:0 2px 8px rgba(20,24,40,.07);
+}
+/* ویرایشگر Quill در حالت روشن باید کادر روشن داشته باشد */
+:root[data-theme="light"] .rich-editor{background:#fff}
+:root[data-theme="light"] .ql-editor{color:var(--text)}
+:root[data-theme="light"] .ql-snow .ql-stroke{stroke:var(--text-2)}
+:root[data-theme="light"] .ql-snow .ql-fill{fill:var(--text-2)}
+/* میله‌های نمودار در حالت روشن کم‌رنگ دیده می‌شدند */
+:root[data-theme="light"] .bar-track{background:var(--bg-5)}
+:root[data-theme="light"] .set-switch{background:#c9cedd}
+
+.theme-toggle-admin{background:var(--bg-4);border:1px solid var(--border);width:38px;height:38px;
+  border-radius:50%;font-size:16px;cursor:pointer;transition:var(--transition);flex-shrink:0}
+.theme-toggle-admin:hover{border-color:var(--accent);transform:rotate(12deg)}
+
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
+    transition-duration:.01ms!important}
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   واکنش‌گرایی بخش‌های تازه‌ساخته‌شدهٔ پنل
+   ═══════════════════════════════════════════════════════════════ */
+@media(max-width:768px){
+  /* جدول کاربران: حداقل عرض تا ستون‌ها له نشوند؛ ظرف خودش اسکرول دارد */
+  .data-table{min-width:640px}
+  .user-toolbar{flex-direction:column}
+  .user-toolbar .select-input{min-width:0;width:100%}
+
+  /* دسته‌بندی‌ها: دکمه‌ها زیر محتوا بروند */
+  .cat-row{flex-wrap:wrap;gap:10px}
+  .cat-body{flex:1 1 60%}
+  .cat-order{order:3;font-size:11px}
+  .cat-row .row-actions{order:4;margin-right:auto}
+
+  /* صف‌ها و ردیف‌های گزارش */
+  .q-row{flex-wrap:wrap}
+  .q-body{flex:1 1 60%;min-width:0}
+  .q-actions{width:100%;justify-content:flex-end}
+  .review-actions{flex-direction:column}
+  .review-actions .btn{width:100%;justify-content:center}
+  .review-meta{gap:8px;font-size:12px}
+
+  /* گزارش‌ها */
+  .report-range{overflow-x:auto;padding-bottom:4px}
+  .range-btn{white-space:nowrap}
+  .bar-label{width:82px;font-size:11.5px}
+  .hour-chart{height:90px}
+  .line-chart{height:100px}
+
+  /* تنظیمات */
+  .settings-card-body{padding:15px}
+  .settings-actions{flex-direction:column;align-items:stretch;gap:10px}
+  .settings-actions .btn{width:100%;justify-content:center}
+
+  /* نوار ابزار ویرایشگر روی موبایل بشکند */
+  .ql-toolbar.ql-snow{padding:8px}
+  .rich-editor,.rich-editor-lg{min-height:240px}
+  .rich-editor-lg .ql-editor{min-height:220px}
+
+  /* کارت‌های آمار دو ستونه */
+  .stats-grid{grid-template-columns:repeat(2,1fr);gap:11px}
+  .stat-card{padding:14px}
+  .stat-ico{width:40px;height:40px;font-size:20px}
+  .stat-card-value{font-size:23px}
+
+  .lb-name{font-size:13px}
+  .lb-count{font-size:11.5px}
+  .modal-lg{width:96vw}
+}
+
+@media(max-width:480px){
+  .stats-grid{grid-template-columns:1fr}
+  .detail-row{flex-direction:column;gap:3px}
+  .detail-val{text-align:right}
+  .lb-avatar{display:none}
+}
+
+/* نوار بالا و سایدبار در حالت روشن — این‌ها رنگ ثابت تیره داشتند
+   و با تغییر تم همراه نمی‌شدند */
+:root[data-theme="light"] .topbar{background:rgba(255,255,255,.88)}
+:root[data-theme="light"] .sidebar{background:var(--bg-2)}
+:root[data-theme="light"] .topbar-user{background:var(--bg-3)}
+:root[data-theme="light"] .modal-overlay{background:rgba(20,24,40,.45)}
+:root[data-theme="light"] .sidebar-overlay{background:rgba(20,24,40,.35)}
+:root[data-theme="light"] .login-page{background:var(--bg-2)}
+:root[data-theme="light"] .select-input{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%23717786' stroke-width='2'%3E%3Cpath d='m2 4 4 4 4-4'/%3E%3C/svg%3E")}
+
+/* نوار وضعیت پست و گفتگوی نویسنده با مدیر */
+.post-status-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius);padding:13px 16px;margin-bottom:14px}
+.status-hint{flex:1;font-size:12.5px;color:var(--text-3);min-width:180px}
+.status-actions{display:flex;gap:8px}
+
+.comment-box{background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:16px;overflow:hidden}
+.comment-head{display:flex;justify-content:space-between;align-items:center;padding:12px 16px}
+.comment-head h4{font-size:13.5px;font-weight:700}
+.comment-list{max-height:280px;overflow-y:auto;padding:0 16px;border-top:1px solid var(--border)}
+.comment{padding:11px 13px;border-radius:var(--radius-xs);margin:10px 0;border:1px solid var(--border)}
+.comment.from-admin{background:var(--accent-bg);border-color:var(--accent-border)}
+.comment.from-author{background:var(--bg-4)}
+.comment-meta{display:flex;justify-content:space-between;gap:10px;margin-bottom:5px}
+.comment-author{font-size:12.5px;font-weight:600}
+.comment-time{font-size:11px;color:var(--text-3)}
+.comment-body{font-size:13px;line-height:1.9;color:var(--text-2);white-space:pre-wrap;word-break:break-word}
+.comment-compose{display:flex;gap:9px;padding:12px 16px;border-top:1px solid var(--border)}
+.comment-compose textarea{flex:1;background:var(--bg);border:1.5px solid var(--border);border-radius:var(--radius-xs);color:var(--text);font-family:inherit;font-size:13px;padding:10px;resize:vertical;outline:none}
+.comment-compose textarea:focus{border-color:var(--accent)}
+@media(max-width:768px){
+  .comment-compose{flex-direction:column}
+  .comment-compose .btn{width:100%;justify-content:center}
+  .post-status-bar{flex-direction:column;align-items:stretch}
+  .status-actions{justify-content:stretch}
+  .status-actions .btn{flex:1;justify-content:center}
+}
